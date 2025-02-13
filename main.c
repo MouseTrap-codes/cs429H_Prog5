@@ -1,64 +1,70 @@
-#include <czmq.h>      // Provides zhash_t for instruction storage
-#include <stdio.h>     // Standard I/O (printf, fprintf, fopen, etc.)
-#include <stdlib.h>    // Memory allocation (malloc, free), exit handling
-#include <string.h>    // String manipulation (strcpy, strcmp, strncpy, sscanf)
-#include <fcntl.h>     // File control (open, O_RDONLY)
-#include <sys/mman.h>  // Memory mapping (mmap, munmap)
-#include <sys/stat.h>  // File statistics (fstat)
-#include <unistd.h>    // Close file descriptor (close)
-#include <ctype.h>     // Character validation (isdigit)
+#include <stdio.h>      // Standard I/O (printf, fprintf, fopen, etc.)
+#include <stdlib.h>     // Memory allocation (malloc, free), exit handling
+#include <string.h>     // String manipulation (strcpy, strcmp, strncpy, sscanf)
+#include <fcntl.h>      // File control (open, O_RDONLY)
+#include <sys/mman.h>   // Memory mapping (mmap, munmap)
+#include <sys/stat.h>   // File statistics (fstat)
+#include <unistd.h>     // Close file descriptor (close)
+#include <ctype.h>      // Character validation (isdigit)
+#include "uthash.h"     // uthash provides the hash table macros
 
-/* Global instruction map */
-zhash_t *instruction_map;
-
-/* Define a structure for a Tinker instruction */
+/* Define a structure for an instruction entry using uthash */
 typedef struct {
-    int opcode;         // Binary opcode for the instruction
-    const char *format; // Format description (e.g., "rd rs rt", "rd L")
-} TinkerInstruction;
+    char name[16];         // Key: instruction name (e.g., "add", "subi")
+    int opcode;            // Binary opcode for the instruction
+    const char *format;    // Format description (e.g., "rd rs rt", "rd L")
+    UT_hash_handle hh;     // makes this structure hashable
+} InstructionEntry;
 
-/* Add an instruction to the zhash table */
+/* Global instruction map (hash table) */
+InstructionEntry *instruction_map = NULL;
+
+/* Add an instruction to the uthash table */
 void addInstruction(const char *instr, int opcode, const char *format) {
-    TinkerInstruction *entry = (TinkerInstruction *)malloc(sizeof(TinkerInstruction));
+    InstructionEntry *entry = (InstructionEntry *)malloc(sizeof(InstructionEntry));
     if (!entry) {
         fprintf(stderr, "Error: malloc failed\n");
         return;
     }
+    /* Copy the instruction name into the fixed-size key field */
+    strncpy(entry->name, instr, sizeof(entry->name));
+    entry->name[sizeof(entry->name) - 1] = '\0';
     entry->opcode = opcode;
-    entry->format = format;  // No need to copy since it's a constant string
-    zhash_insert(instruction_map, instr, entry);
+    entry->format = format;  // Point to constant string
+    HASH_ADD_STR(instruction_map, name, entry);
 }
 
-/* Populate the instruction table */
+/* Populate the instruction table with Tinker instructions */
 void populateTinkerInstruction() {
-    instruction_map = zhash_new();
+    /* Initialize the hash table pointer to NULL */
+    instruction_map = NULL;
 
     // Integer arithmetic instructions
-    addInstruction("add", 0x18, "rd rs rt");
-    addInstruction("addi", 0x19, "rd L");
-    addInstruction("sub", 0x1a, "rd rs rt");
-    addInstruction("subi", 0x1b, "rd L");
-    addInstruction("mul", 0x1c, "rd rs rt");
-    addInstruction("div", 0x1d, "rd rs rt");
+    addInstruction("add",   0x18, "rd rs rt");
+    addInstruction("addi",  0x19, "rd L");
+    addInstruction("sub",   0x1a, "rd rs rt");
+    addInstruction("subi",  0x1b, "rd L");
+    addInstruction("mul",   0x1c, "rd rs rt");
+    addInstruction("div",   0x1d, "rd rs rt");
 
     // Logic instructions
-    addInstruction("and", 0x0, "rd rs rt");
-    addInstruction("or", 0x1, "rd rs rt");
-    addInstruction("xor", 0x2, "rd rs rt");
-    addInstruction("not", 0x3, "rd rs");
+    addInstruction("and",   0x0, "rd rs rt");
+    addInstruction("or",    0x1, "rd rs rt");
+    addInstruction("xor",   0x2, "rd rs rt");
+    addInstruction("not",   0x3, "rd rs");
     addInstruction("shftr", 0x4, "rd rs rt");
-    addInstruction("shftri", 0x5, "rd L");
+    addInstruction("shftri",0x5, "rd L");
     addInstruction("shftl", 0x6, "rd rs rt");
-    addInstruction("shftli", 0x7, "rd L");
+    addInstruction("shftli",0x7, "rd L");
 
     // Control instructions
-    addInstruction("br", 0x8, "rd");
-    addInstruction("brr", 0x9, "rd");
-    addInstruction("brrL", 0xa, "L");
-    addInstruction("brnz", 0xb, "rd rs");
-    addInstruction("call", 0xc, "rd rs rt");
-    addInstruction("return", 0xd, "");
-    addInstruction("brgt", 0xe, "rd rs rt");
+    addInstruction("br",    0x8, "rd");
+    addInstruction("brr",   0x9, "rd");
+    addInstruction("brrL",  0xa, "L");
+    addInstruction("brnz",  0xb, "rd rs");
+    addInstruction("call",  0xc, "rd rs rt");
+    addInstruction("return",0xd, "");
+    addInstruction("brgt",  0xe, "rd rs rt");
 
     // Privileged instructions
     addInstruction("priv0", 0x0, "rd rs rt L");  // Halt
@@ -67,37 +73,36 @@ void populateTinkerInstruction() {
     addInstruction("priv3", 0x3, "rd rs rt L");  // Input
 
     // Data movement instructions
-    addInstruction("mov", 0x10, "rd rs L");
-    addInstruction("movr", 0x11, "rd rs");
-    addInstruction("movL", 0x12, "rd L");
-    addInstruction("movM", 0x13, "rd rs L");
+    addInstruction("mov",   0x10, "rd rs L");
+    addInstruction("movr",  0x11, "rd rs");
+    addInstruction("movL",  0x12, "rd L");
+    addInstruction("movM",  0x13, "rd rs L");
 
     // Floating point instructions
-    addInstruction("addf", 0x14, "rd rs rt");
-    addInstruction("subf", 0x15, "rd rs rt");
-    addInstruction("mulf", 0x16, "rd rs rt");
-    addInstruction("divf", 0x17, "rd rs rt");
+    addInstruction("addf",  0x14, "rd rs rt");
+    addInstruction("subf",  0x15, "rd rs rt");
+    addInstruction("mulf",  0x16, "rd rs rt");
+    addInstruction("divf",  0x17, "rd rs rt");
 }
 
-/* Free the allocated memory in the table */
+/* Free the allocated memory in the instruction hash table */
 void free_instruction_table() {
-    if (!instruction_map) return;
-
-    const char *key;
-    void *value;
-    zhash_foreach(instruction_map, key, value) {
-        free(value);  // Free each instruction entry
+    InstructionEntry *current_entry, *tmp;
+    HASH_ITER(hh, instruction_map, current_entry, tmp) {
+        HASH_DEL(instruction_map, current_entry);
+        free(current_entry);
     }
-    zhash_destroy(&instruction_map);
 }
 
+/* Parse a register string (e.g., "r3") into its numeric value */
 int parse_register(const char *reg) {
     if (reg[0] == 'r') {
-        return atoi(reg + 1); // Convert r3 -> 3
+        return atoi(reg + 1); // Convert "r3" -> 3
     }
     return -1; // Invalid register
 }
 
+/* Assemble a single line of assembly into a 32-bit binary string */
 char *assemble_instruction(const char *assembly_line) {
     static char binary_code[33];  // 32-bit binary + null terminator
     char instr[10], op1[10], op2[10], op3[10];
@@ -110,8 +115,9 @@ char *assemble_instruction(const char *assembly_line) {
         return binary_code;
     }
 
-    // Look up the instruction
-    InstructionEntry *entry = (InstructionEntry *)zhash_lookup(instruction_map, instr);
+    // Look up the instruction in the hash table
+    InstructionEntry *entry = NULL;
+    HASH_FIND_STR(instruction_map, instr, entry);
     if (!entry) {
         printf("Error: Unknown instruction %s\n", instr);
         return NULL;
@@ -136,7 +142,8 @@ char *assemble_instruction(const char *assembly_line) {
         return NULL;
     }
 
-    // Construct 32-bit binary instruction
+    // Construct 32-bit binary instruction:
+    //   opcode (8 bits) | rd (5 bits) | rs (5 bits) | rt (5 bits) | L (9 bits)
     int binary_value = (opcode << 24) | (rd << 19) | (rs << 14) | (rt << 9) | (L & 0x1FF);
 
     // Convert to binary string
@@ -148,7 +155,7 @@ char *assemble_instruction(const char *assembly_line) {
     return binary_code;
 }
 
-
+/* Parse the input file and assemble each line into binary code */
 void parse_and_assemble_file(const char *input_filename, const char *output_filename) {
     int fd = open(input_filename, O_RDONLY);
     if (fd == -1) {
@@ -173,7 +180,7 @@ void parse_and_assemble_file(const char *input_filename, const char *output_file
         return;
     }
 
-    // Open output file
+    // Open the output file
     FILE *output_file = fopen(output_filename, "w");
     if (!output_file) {
         perror("Error opening output file");
@@ -193,7 +200,7 @@ void parse_and_assemble_file(const char *input_filename, const char *output_file
             memcpy(line, start, line_length);
             line[line_length] = '\0';  // Null-terminate the string
 
-            // Pass the line to the assembler function
+            // Assemble the line
             char *binary = assemble_instruction(line);
             if (binary) {
                 fprintf(output_file, "%s -> %s\n", line, binary);
@@ -218,6 +225,9 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    populateTinkerInstruction();
     parse_and_assemble_file(argv[1], argv[2]);
+    free_instruction_table();
+
     return 0;
 }
