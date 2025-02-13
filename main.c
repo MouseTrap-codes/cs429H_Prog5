@@ -1,6 +1,12 @@
-#include <czmq.h>
-#include <stdio.h>
-#include <stdlib.h>
+#include <czmq.h>      // Provides zhash_t for instruction storage
+#include <stdio.h>     // Standard I/O (printf, fprintf, fopen, etc.)
+#include <stdlib.h>    // Memory allocation (malloc, free), exit handling
+#include <string.h>    // String manipulation (strcpy, strcmp, strncpy, sscanf)
+#include <fcntl.h>     // File control (open, O_RDONLY)
+#include <sys/mman.h>  // Memory mapping (mmap, munmap)
+#include <sys/stat.h>  // File statistics (fstat)
+#include <unistd.h>    // Close file descriptor (close)
+#include <ctype.h>     // Character validation (isdigit)
 
 /* Global instruction map */
 zhash_t *instruction_map;
