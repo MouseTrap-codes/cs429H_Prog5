@@ -1,19 +1,19 @@
-#include <stdio.h>      // Standard I/O (printf, fprintf, fopen, etc.)
-#include <stdlib.h>     // Memory allocation (malloc, free), exit handling
-#include <string.h>     // String manipulation (strcpy, strcmp, strncpy, sscanf)
+#include <stdio.h>      // Standard I/O functions
+#include <stdlib.h>     // Memory allocation and exit handling
+#include <string.h>     // String manipulation functions
 #include <fcntl.h>      // File control (open, O_RDONLY)
 #include <sys/mman.h>   // Memory mapping (mmap, munmap)
 #include <sys/stat.h>   // File statistics (fstat)
 #include <unistd.h>     // Close file descriptor (close)
-#include <ctype.h>      // Character validation (isdigit)
-#include "uthash.h"     // uthash provides the hash table macros
+#include <ctype.h>      // Character classification (isspace)
+#include "uthash.h"     // uthash header for hash table macros
 
 /* Define a structure for an instruction entry using uthash */
 typedef struct {
     char name[16];         // Key: instruction name (e.g., "add", "subi")
     int opcode;            // Binary opcode for the instruction
     const char *format;    // Format description (e.g., "rd rs rt", "rd L")
-    UT_hash_handle hh;     // makes this structure hashable
+    UT_hash_handle hh;     // Makes this structure hashable with uthash
 } InstructionEntry;
 
 /* Global instruction map (hash table) */
@@ -30,13 +30,12 @@ void addInstruction(const char *instr, int opcode, const char *format) {
     strncpy(entry->name, instr, sizeof(entry->name));
     entry->name[sizeof(entry->name) - 1] = '\0';
     entry->opcode = opcode;
-    entry->format = format;  // Point to constant string
+    entry->format = format;  // Constant string pointer
     HASH_ADD_STR(instruction_map, name, entry);
 }
 
 /* Populate the instruction table with Tinker instructions */
 void populateTinkerInstruction() {
-    /* Initialize the hash table pointer to NULL */
     instruction_map = NULL;
 
     // Integer arithmetic instructions
@@ -94,6 +93,14 @@ void free_instruction_table() {
     }
 }
 
+/* Helper function to skip leading whitespace */
+const char *skip_whitespace(const char *s) {
+    while (*s && isspace((unsigned char)*s)) {
+        s++;
+    }
+    return s;
+}
+
 /* Parse a register string (e.g., "r3") into its numeric value */
 int parse_register(const char *reg) {
     if (reg[0] == 'r') {
@@ -104,7 +111,7 @@ int parse_register(const char *reg) {
 
 /* Assemble a single line of assembly into a 32-bit binary string */
 char *assemble_instruction(const char *assembly_line) {
-    static char binary_code[33];  // 32-bit binary + null terminator
+    static char binary_code[33];  // 32-bit binary plus null terminator
     char instr[10], op1[10], op2[10], op3[10];
 
     int num_parsed = sscanf(assembly_line, "%s %s %s %s", instr, op1, op2, op3);
@@ -155,7 +162,7 @@ char *assemble_instruction(const char *assembly_line) {
     return binary_code;
 }
 
-/* Parse the input file and assemble each line into binary code */
+/* Parse the input file, assemble each line (ignoring .code/.data), and output only the binary code */
 void parse_and_assemble_file(const char *input_filename, const char *output_filename) {
     int fd = open(input_filename, O_RDONLY);
     if (fd == -1) {
@@ -180,7 +187,7 @@ void parse_and_assemble_file(const char *input_filename, const char *output_file
         return;
     }
 
-    // Open the output file
+    // Open output file
     FILE *output_file = fopen(output_filename, "w");
     if (!output_file) {
         perror("Error opening output file");
@@ -189,7 +196,7 @@ void parse_and_assemble_file(const char *input_filename, const char *output_file
         return;
     }
 
-    // Iterate over the file content line by line
+    // Process file content line by line
     char *start = mapped;
     for (size_t i = 0; i < file_size; i++) {
         if (mapped[i] == '\n' || i == file_size - 1) {
@@ -198,12 +205,19 @@ void parse_and_assemble_file(const char *input_filename, const char *output_file
             // Copy the line into a null-terminated string
             char line[line_length + 1];
             memcpy(line, start, line_length);
-            line[line_length] = '\0';  // Null-terminate the string
+            line[line_length] = '\0';
 
-            // Assemble the line
+            // Skip lines that are directives (.code or .data)
+            const char *trimmed = skip_whitespace(line);
+            if (strncmp(trimmed, ".code", 5) == 0 || strncmp(trimmed, ".data", 5) == 0) {
+                start = &mapped[i] + 1;
+                continue;
+            }
+
+            // Assemble the line and print only the binary code
             char *binary = assemble_instruction(line);
             if (binary) {
-                fprintf(output_file, "%s -> %s\n", line, binary);
+                fprintf(output_file, "%s\n", binary);
             } else {
                 fprintf(output_file, "Error: Could not assemble line: %s\n", line);
             }

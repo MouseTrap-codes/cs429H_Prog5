@@ -2,4 +2,4 @@
 
 # Compiler and flags
 #!/bin/bash
-gcc -o hw5 main.c -I czmq/src
+gcc -o hw5 main.c -I uthash-master/src
