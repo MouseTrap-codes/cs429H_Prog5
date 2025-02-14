@@ -15,13 +15,12 @@
  ******************************************************************************/
 typedef struct {
     char label[50];
-    int address;        // ie 0x1000 is stored as 4096 (in decimal)
+    int address;        // e.g., 0x1000 stored as 4096 (decimal)
     UT_hash_handle hh;  // UTHash handle
 } LabelAddress;
 
 static LabelAddress *hashmap = NULL;
 
-// add a label to the hash map.
 static void add_label(const char *label, int address) {
     LabelAddress *entry = (LabelAddress *)malloc(sizeof(LabelAddress));
     if (!entry) {
@@ -34,14 +33,12 @@ static void add_label(const char *label, int address) {
     HASH_ADD_STR(hashmap, label, entry);
 }
 
-// find a label by name.
 static LabelAddress *find_label(const char *label) {
     LabelAddress *entry;
     HASH_FIND_STR(hashmap, label, entry);
     return entry;
 }
 
-// free the hashmap
 static void free_hashmap(void) {
     LabelAddress *cur, *tmp;
     HASH_ITER(hh, hashmap, cur, tmp) {
@@ -55,12 +52,8 @@ static void free_hashmap(void) {
  ******************************************************************************/
 static void trim(char *s) {
     char *p = s;
-    while (isspace((unsigned char)*p)) {
-        p++;
-    }
-    if (p != s) {
-        memmove(s, p, strlen(p) + 1);
-    }
+    while (isspace((unsigned char)*p)) { p++; }
+    if (p != s) { memmove(s, p, strlen(p) + 1); }
     size_t len = strlen(s);
     while (len > 0 && isspace((unsigned char)s[len - 1])) {
         s[len - 1] = '\0';
@@ -93,7 +86,6 @@ static int parse_unsigned_12_bit(const char *str, int *valueOut) {
 
 /******************************************************************************
  * Macros used in PASS 1 to detect expansions (e.g., ld, push, pop)
- * so we can increment PC by the correct byte-count.
  ******************************************************************************/
 static int starts_with_ld(const char *line) {
     while (isspace((unsigned char)*line)) { line++; }
@@ -129,9 +121,7 @@ static int starts_with_pop(const char *line) {
 }
 
 /******************************************************************************
- * validate_brr: brr has two forms:
- *   brr rX  (pc ← pc + rX)  opcode 0x9
- *   brr L   (pc ← pc + L)   opcode 0xa, L can be negative
+ * Instruction-specific validation functions (brr, mov, etc.)
  ******************************************************************************/
 static int validate_brr(const char *line) {
     char op[32], operand[64];
@@ -141,15 +131,13 @@ static int validate_brr(const char *line) {
         return 0;
     }
     if (operand[0] == 'r') {
-        // brr rX form
         int rd = atoi(operand + 1);
         if (rd < 0 || rd > 31) {
             fprintf(stderr, "Error: 'brr r%d' invalid register.\n", rd);
             return 0;
         }
-        return 1; // valid
+        return 1;
     } else {
-        // brr L form => L is signed 12-bit
         int val;
         if (!parse_signed_12_bit(operand, &val)) {
             fprintf(stderr, "Error: 'brr' literal out of [-2048..2047]: %s\n", operand);
@@ -159,26 +147,13 @@ static int validate_brr(const char *line) {
     }
 }
 
-/******************************************************************************
- * validate_mov: Tinker has 4 forms of mov:
- *  1) mov rD, (rS)(L)   => 0x10
- *  2) mov rD, rS        => 0x11
- *  3) mov rD, L         => 0x12
- *  4) mov (rD)(L), rS   => 0x13
- * We'll parse them in pass1 to ensure correct usage and immediate range.
- ******************************************************************************/
 static int validate_mov(const char *line) {
-    // quick tokenize
     char op[32], part1[64], part2[64];
     int count = sscanf(line, "%31s %63[^,], %63[^\n]", op, part1, part2);
-
-    // if count < 2 => invalid "mov"
     if (count < 2) {
         fprintf(stderr, "Error: incomplete 'mov' instruction: %s\n", line);
         return 0;
     }
-
-    // if count=2
     if (count == 2) {
         char second[64] = {0};
         if (sscanf(part1, "%63s %63s", part1, second) == 2) {
@@ -186,18 +161,13 @@ static int validate_mov(const char *line) {
             count = 3;
         }
     }
-
-    // have possibly 3 tokens: op, part1, part2
-    // remove trailing spaces or commas from part1, part2
     {
-        // trim front
         char *p = part1; 
         while (isspace((unsigned char)*p) || *p == ',') p++;
         if (p != part1) memmove(part1, p, strlen(p)+1);
         p = part2;
         while (isspace((unsigned char)*p) || *p == ',') p++;
         if (p != part2) memmove(part2, p, strlen(p)+1);
-        // trim end
         for (int i = (int)strlen(part1)-1; i >= 0; i--) {
             if (isspace((unsigned char)part1[i]) || part1[i] == ',') part1[i] = '\0'; else break;
         }
@@ -205,25 +175,7 @@ static int validate_mov(const char *line) {
             if (isspace((unsigned char)part2[i]) || part2[i] == ',') part2[i] = '\0'; else break;
         }
     }
-
-    // see which form it might be:
-    //  (a) mov rD, rS
-    //  (b) mov rD, L
-    //  (c) mov rD, (rS)(L)
-    //  (d) mov (rD)(L), rS
-    //
-    // detect (d) if part1 starts with '(' or we see "(". 
-    // detect (c) if part2 starts with '('
-    // detect (a) if both part1 and part2 are registers
-    // detect (b) if part1 is register, part2 is immediate
-    //
-
-    // If "part1" starts with '(' => form (d)
     if (part1[0] == '(') {
-        // (d) mov (rD)(L), rS
-        // part1 => e.g. "(r5)(-8)"
-        // part2 => e.g. "r6"
-        // check part2 is register
         if (part2[0] != 'r') {
             fprintf(stderr, "Error: 'mov (rD)(L), rS' => 'rS' is not a register? %s\n", line);
             return 0;
@@ -233,8 +185,6 @@ static int validate_mov(const char *line) {
             fprintf(stderr, "Error: register out of range in mov (rD)(L), rS => %s\n", line);
             return 0;
         }
-        // parse part1 => e.g. "(r5)(-8)"
-        // find rD in the parentheses
         char *p = strstr(part1, "r");
         if (!p) {
             fprintf(stderr, "Error: 'mov (rD)(L), rS': can't find register in %s\n", part1);
@@ -250,26 +200,18 @@ static int validate_mov(const char *line) {
             fprintf(stderr, "Error: 'mov (rD)(L), rS': missing offset => %s\n", line);
             return 0;
         }
-        // p should point to "(" that encloses the offset
-        p++; // skip '('
+        p++;
         char offsetBuf[32];
         int i=0;
-        while (*p && *p != ')' && i < 31) {
-            offsetBuf[i++] = *p++;
-        }
+        while (*p && *p != ')' && i < 31) { offsetBuf[i++] = *p++; }
         offsetBuf[i] = '\0';
-        // offsetBuf might be "-8" or "12"
-        // assume signed 12-bit
         int offsetVal;
         if (!parse_signed_12_bit(offsetBuf, &offsetVal)) {
             fprintf(stderr, "Error: offset out of [-2048..2047] in 'mov (rD)(L), rS' => %s\n", offsetBuf);
             return 0;
         }
-        // passes validation
         return 1; 
     }
-
-    // otherwise, part1 is presumably "rD"
     if (part1[0] != 'r') {
         fprintf(stderr, "Error: mov => expected 'rD' or '(rD)(L)' => got: %s\n", part1);
         return 0;
@@ -279,29 +221,19 @@ static int validate_mov(const char *line) {
         fprintf(stderr, "Error: register out of range in mov => %s\n", line);
         return 0;
     }
-
-    // if count < 3 => incomplete
     if (count < 3) {
         fprintf(stderr, "Error: incomplete 'mov' => missing second operand: %s\n", line);
         return 0;
     }
-
-    // check part2
     if (part2[0] == 'r') {
-        // (a) mov rD, rS
-        // ie "mov r5, r6"
         int rS = atoi(part2+1);
         if (rS < 0 || rS > 31) {
             fprintf(stderr, "Error: register out of range => %s\n", line);
             return 0;
         }
-        // Valid
         return 1;
     }
     else if (part2[0] == '(') {
-        // (c) mov rD, (rS)(L)
-        // parse the memory form
-        // ie part2="(r6)(-8)"
         char *p = strstr(part2, "r");
         if (!p) {
             fprintf(stderr, "Error: can't find register in 'mov rD, (rS)(L)' => %s\n", line);
@@ -317,14 +249,11 @@ static int validate_mov(const char *line) {
             fprintf(stderr, "Error: missing offset => %s\n", line);
             return 0;
         }
-        p++; // skip '('
+        p++;
         char offsetBuf[32];
         int i=0;
-        while (*p && *p != ')' && i < 31) {
-            offsetBuf[i++] = *p++;
-        }
+        while (*p && *p != ')' && i < 31) { offsetBuf[i++] = *p++; }
         offsetBuf[i] = '\0';
-        // parse offset as signed 12-bit
         int offsetVal;
         if (!parse_signed_12_bit(offsetBuf, &offsetVal)) {
             fprintf(stderr, "Error: offset out of [-2048..2047] => %s\n", offsetBuf);
@@ -333,9 +262,6 @@ static int validate_mov(const char *line) {
         return 1; 
     }
     else {
-        // (b) mov rD, L
-        // We assume an unsigned 12-bit literal for bits 52..63
-        // ie "mov r5, 100"
         int val;
         if (!parse_unsigned_12_bit(part2, &val)) {
             fprintf(stderr, "Error: mov rD, L => L out of [0..4095]: %s\n", part2);
@@ -345,32 +271,23 @@ static int validate_mov(const char *line) {
     }
 }
 
-/******************************************************************************
- * For addi, subi, shftri, shftli => 0..4095
- * For everything else with literal => separate checks (brr, mov, etc.)
- ******************************************************************************/
 static int validate_instruction_immediate(const char *line) {
-    // do a quick parse: opcode, rD, immediate
     char op[32], rdPart[32], immPart[64];
     int count = sscanf(line, "%31s %31s %63[^\n]", op, rdPart, immPart);
-    if (count < 2) return 1; // we won't call it invalid here
-
+    if (count < 2) return 1;
     if (!strcmp(op, "addi") || !strcmp(op, "subi") || 
         !strcmp(op, "shftri") || !strcmp(op, "shftli")) 
     {
-        // must have an unsigned 12-bit immediate
         if (count < 3) {
             fprintf(stderr, "Error: missing immediate => %s\n", line);
             return 0;
         }
-        // rdPart => "rD"
         if (rdPart[0] != 'r') return 0;
         int rD = atoi(rdPart+1);
         if (rD < 0 || rD > 31) {
             fprintf(stderr, "Error: register out of range => %s\n", line);
             return 0;
         }
-        // immPart might have a leading comma
         char *p = immPart;
         while (*p == ',' || isspace((unsigned char)*p)) p++;
         int val;
@@ -380,13 +297,9 @@ static int validate_instruction_immediate(const char *line) {
         }
         return 1;
     }
-    // fallback => do nothing
     return 1;
 }
 
-/******************************************************************************
- * is_valid_instruction_pass1: check opcode and specialized forms (brr, mov, etc.)
- ******************************************************************************/
 static int is_valid_instruction_pass1(const char *line) {
     char op[32];
     if (sscanf(line, "%31s", op) != 1) {
@@ -412,7 +325,6 @@ static int is_valid_instruction_pass1(const char *line) {
     if (!recognized) {
         return 0;
     }
-
     if (!strcmp(op, "brr")) {
         if (!validate_brr(line)) {
             return 0;
@@ -420,23 +332,20 @@ static int is_valid_instruction_pass1(const char *line) {
         return 1;
     }
     else if (!strcmp(op, "mov")) {
-        // parse the line for any of the 4 forms
         if (!validate_mov(line)) {
             return 0;
         }
         return 1;
     }
-
-    // for addi, subi, etc.
     if (!validate_instruction_immediate(line)) {
         return 0;
     }
-
     return 1;
 }
 
 /******************************************************************************
- * PASS 1: Gather labels, track the program counter, ensure valid instructions.
+ * PASS 1: Gather labels, track program counter, and validate instructions.
+ * The PC starts at 0x1000.
  ******************************************************************************/
 static void pass1(const char *filename) {
     FILE *fin = fopen(filename, "r");
@@ -445,8 +354,7 @@ static void pass1(const char *filename) {
         exit(1);
     }
     enum { NONE, CODE, DATA } section = NONE;
-    int programCounter = 0x1000; // tinker code starts at address 0x1000
-
+    int programCounter = 0x1000;
     char line[1024];
     while (fgets(line, sizeof(line), fin)) {
         line[strcspn(line, "\n")] = '\0';
@@ -454,7 +362,6 @@ static void pass1(const char *filename) {
         if (!line[0] || line[0] == ';') {
             continue;
         }
-        // check for directives.
         if (line[0] == '.') {
             if (!strncmp(line, ".code", 5)) {
                 section = CODE;
@@ -464,42 +371,28 @@ static void pass1(const char *filename) {
             }
             continue;
         }
-        // label definition.
         if (line[0] == ':') {
             char labelName[50];
-            if (sscanf(line + 1, "%49s", labelName) == 1) {
+            if (sscanf(line + 1, "%49s", labelName) == 1)
                 add_label(labelName, programCounter);
-            }
             continue;
         }
-        // process instructions/data
         if (section == CODE) {
-            // validate the instruction
             if (!is_valid_instruction_pass1(line)) {
                 fprintf(stderr, "pass1 error: invalid line => %s\n", line);
                 fclose(fin);
                 exit(1);
             }
-            // macros expansions for pass1 counting:
-            if (starts_with_ld(line)) {
-                // ld => expands to 48 bytes
+            if (starts_with_ld(line))
                 programCounter += 48;
-            }
-            else if (starts_with_push(line)) {
-                // push => expands to 8 bytes
+            else if (starts_with_push(line))
                 programCounter += 8;
-            }
-            else if (starts_with_pop(line)) {
-                // pop => expands to 8 bytes
+            else if (starts_with_pop(line))
                 programCounter += 8;
-            }
-            else {
-                // normal instruction => 4 bytes
+            else
                 programCounter += 4;
-            }
         } 
         else if (section == DATA) {
-            // Each data item is 8 bytes
             programCounter += 8;
         }
     }
@@ -518,6 +411,7 @@ static void expandOut(int rD, int rS, FILE *fout) {
 static void expandClr(int rD, FILE *fout) {
     fprintf(fout, "\txor r%d, r%d, r%d\n", rD, rD, rD);
 }
+// Now halt expands to the original "priv r0, r0, r0, 0" instruction.
 static void expandHalt(FILE *fout) {
     fprintf(fout, "\tpriv r0, r0, r0, 0\n");
 }
@@ -529,20 +423,14 @@ static void expandPop(int rD, FILE *fout) {
     fprintf(fout, "\tmov r%d, (r31)(0)\n", rD);
     fprintf(fout, "\taddi r31, 8\n");
 }
-
-/******************************************************************************
- * expandLd: Expand an ld macro into 12 instructions (48 bytes).
- ******************************************************************************/
 static void expandLd(int rD, uint64_t L, FILE *fout) {
     fprintf(fout, "\txor r%d, r%d, r%d\n", rD, rD, rD);
-
     unsigned long long top12  = (L >> 52) & 0xFFF;
     unsigned long long mid12a = (L >> 40) & 0xFFF;
     unsigned long long mid12b = (L >> 28) & 0xFFF;
     unsigned long long mid12c = (L >> 16) & 0xFFF;
     unsigned long long mid4   = (L >> 4)  & 0xFFF;
     unsigned long long last4  = L & 0xF;
-
     fprintf(fout, "\taddi r%d, %llu\n", rD, top12);
     fprintf(fout, "\tshftli r%d, 12\n", rD);
     fprintf(fout, "\taddi r%d, %llu\n", rD, mid12a);
@@ -555,21 +443,14 @@ static void expandLd(int rD, uint64_t L, FILE *fout) {
     fprintf(fout, "\tshftli r%d, 4\n", rD);
     fprintf(fout, "\taddi r%d, %llu\n", rD, last4);
 }
-
-/******************************************************************************
- * parseMacro (Pass 2):
- * Handle macros: ld, push, pop, in, out, clr, halt
- ******************************************************************************/
 static void parseMacro(const char *line, FILE *fout) {
     regex_t regex;
     regmatch_t matches[4];
     char op[16];
-
     if (sscanf(line, "%15s", op) != 1) {
         fprintf(stderr, "parseMacro: cannot parse op from line: %s\n", line);
         return;
     }
-
     if (!strcmp(op, "ld")) {
         const char *pattern =
           "^[[:space:]]*ld[[:space:]]+r([0-9]+)[[:space:]]*,?[[:space:]]*(:?)([0-9a-fA-FxX:]+)[[:space:]]*$";
@@ -585,15 +466,9 @@ static void parseMacro(const char *line, FILE *fout) {
             strncpy(regBuf, line + matches[1].rm_so, len);
             regBuf[len] = '\0';
             rD = atoi(regBuf);
-            if (rD < 0 || rD > 31) {
-                fprintf(stderr, "Error: register out of range in ld => r%d\n", rD);
-                regfree(&regex);
-                return;
-            }
             len = matches[3].rm_eo - matches[3].rm_so;
             strncpy(immBuf, line + matches[3].rm_so, len);
             immBuf[len] = '\0';
-
             if (immBuf[0] == ':') {
                 LabelAddress *entry = find_label(immBuf + 1);
                 if (!entry) {
@@ -633,11 +508,6 @@ static void parseMacro(const char *line, FILE *fout) {
             strncpy(regBuf, line + matches[1].rm_so, len);
             regBuf[len] = '\0';
             rD = atoi(regBuf);
-            if (rD < 0 || rD > 31) {
-                fprintf(stderr, "Error: register out of range in push => %s\n", line);
-                regfree(&regex);
-                return;
-            }
             expandPush(rD, fout);
         } else {
             fprintf(stderr, "Error parsing push macro: %s\n", line);
@@ -658,11 +528,6 @@ static void parseMacro(const char *line, FILE *fout) {
             strncpy(regBuf, line + matches[1].rm_so, len);
             regBuf[len] = '\0';
             rD = atoi(regBuf);
-            if (rD < 0 || rD > 31) {
-                fprintf(stderr, "Error: register out of range in pop => %s\n", line);
-                regfree(&regex);
-                return;
-            }
             expandPop(rD, fout);
         } else {
             fprintf(stderr, "Error parsing pop macro: %s\n", line);
@@ -752,9 +617,9 @@ static void parseMacro(const char *line, FILE *fout) {
         }
         regfree(&regex);
     }
+    // Now halt expands to "priv r0, r0, r0, 0"
     else if (!strcmp(op, "halt")) {
-        const char *pattern = 
-          "^[[:space:]]*halt[[:space:]]*$";
+        const char *pattern = "^[[:space:]]*halt[[:space:]]*$";
         if (regcomp(&regex, pattern, REG_EXTENDED) != 0) {
             fprintf(stderr, "Could not compile regex for halt\n");
             return;
@@ -767,12 +632,10 @@ static void parseMacro(const char *line, FILE *fout) {
         regfree(&regex);
     }
     else {
-        // not recognized – print the line as-is.
         fprintf(fout, "\t%s\n", line);
     }
 }
 
-// check if line is one of the recognized macros
 static int is_macro_line(const char *line) {
     char op[16];
     if (sscanf(line, "%15s", op) != 1) {
@@ -789,7 +652,7 @@ static int is_macro_line(const char *line) {
 }
 
 /******************************************************************************
- * PASS 2: Output file generation (macro expansion + label substitution)
+ * PASS 2: Generate the .tk file (macro expansion and label substitution)
  ******************************************************************************/
 static void pass2(const char *infile, const char *outfile) {
     FILE *fin = fopen(infile, "r");
@@ -803,35 +666,21 @@ static void pass2(const char *infile, const char *outfile) {
         fclose(fin);
         exit(1);
     }
-
     char line[1024];
     while (fgets(line, sizeof(line), fin)) {
         line[strcspn(line, "\n")] = '\0';
         trim(line);
-        if (!line[0] || line[0] == ';') {
-            continue;
-        }
-        // Directives
-        if (!strcmp(line, ".code")) {
-            fprintf(fout, ".code\n");
-            continue;
-        }
-        if (!strcmp(line, ".data")) {
-            fprintf(fout, ".data\n");
-            continue;
-        }
-        // skip label definitions
-        if (line[0] == ':') {
-            continue;
-        }
-        // replace label references with its address
+        if (!line[0] || line[0] == ';') continue;
+        if (!strcmp(line, ".code")) { fprintf(fout, ".code\n"); continue; }
+        if (!strcmp(line, ".data")) { fprintf(fout, ".data\n"); continue; }
+        if (line[0] == ':') continue;
         char *colon = strchr(line, ':');
         if (colon) {
             char lbl[50];
             if (sscanf(colon + 1, "%49s", lbl) == 1) {
                 LabelAddress *entry = find_label(lbl);
                 if (entry) {
-                    *colon = '\0'; // cut at colon
+                    *colon = '\0';
                     char buffer[1024];
                     snprintf(buffer, sizeof(buffer), "\t%s%d", line, entry->address);
                     if (is_macro_line(buffer)) {
@@ -847,48 +696,43 @@ static void pass2(const char *infile, const char *outfile) {
                 }
             }
         }
-        // if the line is a macro, expand; otherwise output as-is
         if (is_macro_line(line)) {
             parseMacro(line, fout);
         } else {
             fprintf(fout, "\t%s\n", line);
         }
     }
-
     fclose(fin);
     fclose(fout);
 }
 
-/* Define a structure for an instruction entry using uthash */
+/******************************************************************************
+ * Instruction Table for Assembler
+ ******************************************************************************/
 typedef struct {
-    char name[16];         // Key: instruction name (e.g., "add", "subi")
-    int opcode;            // Binary opcode for the instruction
-    const char *format;    // Format description (e.g., "rd rs rt", "rd L")
-    UT_hash_handle hh;     // Makes this structure hashable with uthash
+    char name[16];         // instruction mnemonic
+    int opcode;            // Binary opcode
+    const char *format;    // Format string (e.g., "rd rs rt", "rd L", "L")
+    UT_hash_handle hh;
 } InstructionEntry;
 
-/* Global instruction map (hash table) */
 InstructionEntry *instruction_map = NULL;
 
-/* Add an instruction to the uthash table */
 void addInstruction(const char *instr, int opcode, const char *format) {
     InstructionEntry *entry = (InstructionEntry *)malloc(sizeof(InstructionEntry));
     if (!entry) {
         fprintf(stderr, "Error: malloc failed\n");
         return;
     }
-    /* Copy the instruction name into the fixed-size key field */
     strncpy(entry->name, instr, sizeof(entry->name));
     entry->name[sizeof(entry->name) - 1] = '\0';
     entry->opcode = opcode;
-    entry->format = format;  // Constant string pointer
+    entry->format = format;
     HASH_ADD_STR(instruction_map, name, entry);
 }
 
-/* Populate the instruction table with Tinker instructions */
 void populateTinkerInstruction() {
     instruction_map = NULL;
-
     // Integer arithmetic instructions
     addInstruction("add",   0x18, "rd rs rt");
     addInstruction("addi",  0x19, "rd L");
@@ -896,7 +740,6 @@ void populateTinkerInstruction() {
     addInstruction("subi",  0x1b, "rd L");
     addInstruction("mul",   0x1c, "rd rs rt");
     addInstruction("div",   0x1d, "rd rs rt");
-
     // Logic instructions
     addInstruction("and",   0x0, "rd rs rt");
     addInstruction("or",    0x1, "rd rs rt");
@@ -906,7 +749,6 @@ void populateTinkerInstruction() {
     addInstruction("shftri",0x5, "rd L");
     addInstruction("shftl", 0x6, "rd rs rt");
     addInstruction("shftli",0x7, "rd L");
-
     // Control instructions
     addInstruction("br",    0x8, "rd");
     addInstruction("brr",   0x9, "rd");
@@ -915,19 +757,13 @@ void populateTinkerInstruction() {
     addInstruction("call",  0xc, "rd rs rt");
     addInstruction("return",0xd, "");
     addInstruction("brgt",  0xe, "rd rs rt");
-
-    // Privileged instructions
-    addInstruction("priv0", 0x0, "rd rs rt L");  // Halt
-    addInstruction("priv1", 0x1, "rd rs rt L");  // Trap
-    addInstruction("priv2", 0x2, "rd rs rt L");  // RTE
-    addInstruction("priv3", 0x3, "rd rs rt L");  // Input
-
+    // Privileged instruction for halt expansion: "priv r0, r0, r0, 0"
+    addInstruction("priv",  0xf, "rd rs rt L");
     // Data movement instructions
     addInstruction("mov",   0x10, "rd rs L");
     addInstruction("movr",  0x11, "rd rs");
     addInstruction("movL",  0x12, "rd L");
     addInstruction("movM",  0x13, "rd rs L");
-
     // Floating point instructions
     addInstruction("addf",  0x14, "rd rs rt");
     addInstruction("subf",  0x15, "rd rs rt");
@@ -935,7 +771,6 @@ void populateTinkerInstruction() {
     addInstruction("divf",  0x17, "rd rs rt");
 }
 
-/* Free the allocated memory in the instruction hash table */
 void free_instruction_table() {
     InstructionEntry *current_entry, *tmp;
     HASH_ITER(hh, instruction_map, current_entry, tmp) {
@@ -944,141 +779,93 @@ void free_instruction_table() {
     }
 }
 
-/* Helper function to skip leading whitespace */
+/******************************************************************************
+ * Helper: Skip leading whitespace.
+ ******************************************************************************/
 const char *skip_whitespace(const char *s) {
-    while (*s && isspace((unsigned char)*s)) {
-        s++;
-    }
+    while (*s && isspace((unsigned char)*s)) { s++; }
     return s;
 }
 
-/* Parse a register string (e.g., "r3") into its numeric value */
-int parse_register(const char *reg) {
-    if (reg[0] == 'r') {
-        return atoi(reg + 1); // Convert "r3" -> 3
-    }
-    return -1; // Invalid register
-}
-
-/* Assemble a single line of assembly into a 32-bit binary string */
+/******************************************************************************
+ * Assemble a single line of assembly into a 32-bit binary string.
+ * Encoding: opcode (5 bits) | rd (5 bits) | rs (5 bits) | rt (5 bits) | L (12 bits)
+ ******************************************************************************/
 char *assemble_instruction(const char *assembly_line) {
     static char binary_code[33];  // 32-bit binary plus null terminator
     char instr[10], op1[10], op2[10], op3[10];
-
     int num_parsed = sscanf(assembly_line, "%s %s %s %s", instr, op1, op2, op3);
-
-    // Handle "hlt" instruction
     if (strcmp(instr, "hlt") == 0) {
         strcpy(binary_code, "00000000000000000000000000000000");
         return binary_code;
     }
-
-    // Look up the instruction in the hash table
     InstructionEntry *entry = NULL;
     HASH_FIND_STR(instruction_map, instr, entry);
     if (!entry) {
         printf("Error: Unknown instruction %s\n", instr);
         return NULL;
     }
-
-    // Extract opcode and operands
     int opcode = entry->opcode;
     int rd = 0, rs = 0, rt = 0, L = 0;
-
     if (strcmp(entry->format, "rd rs rt") == 0 && num_parsed == 4) {
-        rd = parse_register(op1);
-        rs = parse_register(op2);
-        rt = parse_register(op3);
+        rd = (op1[0]=='r') ? atoi(op1+1) : 0;
+        rs = (op2[0]=='r') ? atoi(op2+1) : 0;
+        rt = (op3[0]=='r') ? atoi(op3+1) : 0;
     } else if (strcmp(entry->format, "rd L") == 0 && num_parsed == 3) {
-        rd = parse_register(op1);
+        rd = (op1[0]=='r') ? atoi(op1+1) : 0;
         L = atoi(op2);
     } else if (strcmp(entry->format, "rd rs") == 0 && num_parsed == 3) {
-        rd = parse_register(op1);
-        rs = parse_register(op2);
+        rd = (op1[0]=='r') ? atoi(op1+1) : 0;
+        rs = (op2[0]=='r') ? atoi(op2+1) : 0;
+    } else if (strcmp(entry->format, "L") == 0 && num_parsed == 2) {
+        L = atoi(op1);
+        rd = rs = rt = 0;
     } else {
         printf("Error: Invalid operands for %s\n", instr);
         return NULL;
     }
-
-    // Construct 32-bit binary instruction:
-    //   opcode (8 bits) | rd (5 bits) | rs (5 bits) | rt (5 bits) | L (9 bits)
-    int binary_value = (opcode << 24) | (rd << 19) | (rs << 14) | (rt << 9) | (L & 0x1FF);
-
-    // Convert to binary string
+    int binary_value = (opcode << 27) | (rd << 22) | (rs << 17) | (rt << 12) | (L & 0xFFF);
     for (int i = 31; i >= 0; i--) {
-        binary_code[31 - i] = ((binary_value >> i) & 1) + '0';
+        binary_code[31 - i] = ((binary_value >> i) & 1) ? '1' : '0';
     }
     binary_code[32] = '\0';
-
     return binary_code;
 }
 
-/* Parse the input file, assemble each line (ignoring .code/.data), and output only the binary code */
+/******************************************************************************
+ * Parse the input file and output only the binary code.
+ ******************************************************************************/
 void parse_and_assemble_file(const char *input_filename, const char *output_filename) {
     int fd = open(input_filename, O_RDONLY);
-    if (fd == -1) {
-        perror("Error opening input file");
-        return;
-    }
-
-    // Get the file size
+    if (fd == -1) { perror("Error opening input file"); return; }
     struct stat sb;
-    if (fstat(fd, &sb) == -1) {
-        perror("Error getting file size");
-        close(fd);
-        return;
-    }
+    if (fstat(fd, &sb) == -1) { perror("Error getting file size"); close(fd); return; }
     size_t file_size = sb.st_size;
-
-    // Memory-map the file
     char *mapped = mmap(NULL, file_size, PROT_READ, MAP_PRIVATE, fd, 0);
-    if (mapped == MAP_FAILED) {
-        perror("Error mmapping input file");
-        close(fd);
-        return;
-    }
-
-    // Open output file
+    if (mapped == MAP_FAILED) { perror("Error mmapping input file"); close(fd); return; }
     FILE *output_file = fopen(output_filename, "w");
-    if (!output_file) {
-        perror("Error opening output file");
-        munmap(mapped, file_size);
-        close(fd);
-        return;
-    }
-
-    // Process file content line by line
+    if (!output_file) { perror("Error opening output file"); munmap(mapped, file_size); close(fd); return; }
     char *start = mapped;
     for (size_t i = 0; i < file_size; i++) {
         if (mapped[i] == '\n' || i == file_size - 1) {
             size_t line_length = &mapped[i] - start + 1;
-
-            // Copy the line into a null-terminated string
             char line[line_length + 1];
             memcpy(line, start, line_length);
             line[line_length] = '\0';
-
-            // Skip lines that are directives (.code or .data)
             const char *trimmed = skip_whitespace(line);
             if (strncmp(trimmed, ".code", 5) == 0 || strncmp(trimmed, ".data", 5) == 0) {
                 start = &mapped[i] + 1;
                 continue;
             }
-
-            // Assemble the line and print only the binary code
             char *binary = assemble_instruction(line);
             if (binary) {
                 fprintf(output_file, "%s\n", binary);
             } else {
                 fprintf(output_file, "Error: Could not assemble line: %s\n", line);
             }
-
-            // Move to the next line
             start = &mapped[i] + 1;
         }
     }
-
-    // Cleanup
     fclose(output_file);
     munmap(mapped, file_size);
     close(fd);
@@ -1086,41 +873,24 @@ void parse_and_assemble_file(const char *input_filename, const char *output_file
 
 /******************************************************************************
  * main
- *
- * This version now accepts only the original input assembly file and the
- * final output file as command-line arguments. Internally, a temporary file
- * is created for the tk file generated in Pass 2, which is then used to produce
- * the final tko file with binary encodings.
+ * This version accepts only an input assembly file and an output file.
+ * Internally a temporary .tk file is created for Pass 2.
  ******************************************************************************/
 int main(int argc, char *argv[]) {
     if (argc != 3) {
         fprintf(stderr, "Usage: %s <assembly_file> <output_file>\n", argv[0]);
         return 1;
     }
-
-    // Pass 1: validate instructions and build label->address mapping
     pass1(argv[1]);
-
-    // Create a temporary file for the tk file output
     char temp_filename[] = "tempXXXXXX";
     int temp_fd = mkstemp(temp_filename);
-    if (temp_fd == -1) {
-        perror("mkstemp failed");
-        exit(1);
-    }
+    if (temp_fd == -1) { perror("mkstemp failed"); exit(1); }
     close(temp_fd);
-
-    // Pass 2: expand macros and substitute labels into the temporary tk file
     pass2(argv[1], temp_filename);
     free_hashmap();
-
-    // Populate instruction table and assemble the tk file into binary encoding
     populateTinkerInstruction();
     parse_and_assemble_file(temp_filename, argv[2]);
     free_instruction_table();
-
-    // Remove temporary file
     remove(temp_filename);
-
     return 0;
 }
