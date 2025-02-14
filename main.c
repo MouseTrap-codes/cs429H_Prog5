@@ -75,7 +75,7 @@ int parseSigned12(const char *str, int *valueOut) {
 }
 
 int parseUnsigned12(const char *str, int *valueOut) {
-    // Check that the immediate does not begin with a '-' sign.
+    // For instructions with unsigned immediates, a leading '-' is an error.
     if (str[0] == '-') {
         return 0;
     }
@@ -168,7 +168,6 @@ uint32_t binStrToUint32(const char *binStr) {
 // ---------------- Custom Assembly Routines ----------------
 // brr: if operand begins with 'r', use opcode 0x9; otherwise, use opcode 0xa.
 void assembleBrr(const char *operand, char *binStr) {
-    // Skip leading whitespace
     while (isspace((unsigned char)*operand)) {
         operand++;
     }
@@ -185,7 +184,12 @@ void assembleBrr(const char *operand, char *binStr) {
     intToBinaryStr(inst, 32, binStr);
 }
 
-// mov: determine form based on operands
+// mov: custom routine for MOV instructions.
+// This routine distinguishes between the different forms:
+//   - Form 4 (store to memory): "mov (rD)(L), rS" => opcode 0x13, immediate is signed.
+//   - Form 1 (load from memory): "mov rD, (rS)(L)" => opcode 0x10, immediate is signed.
+//   - Form 2: "mov rD, rS" => opcode 0x11.
+//   - Form 3: "mov rD, L" => opcode 0x12, immediate is unsigned.
 void assembleMov(const char *line, char *binStr) {
     char mnemonic[10], token1[64], token2[64];
     if (sscanf(line, "%s %63[^,], %63s", mnemonic, token1, token2) < 3) {
@@ -197,10 +201,9 @@ void assembleMov(const char *line, char *binStr) {
 
     int opcode = 0, rd = 0, rs = 0, rt = 0, imm = 0;
 
-    // If token1 looks like "(rD)(L)", it's form 4; else, parse normally.
+    // If token1 begins with '(' then assume form 4: "mov (rD)(L), rS"
     if (token1[0] == '(') {
-        // Form 4: mov (rD)(L), rS => opcode 0x13
-        opcode = 0x13;
+        opcode = 0x13;  // Format: mov (rd)(L), rs
         char regBuf[16], offBuf[16];
         char *p1 = strchr(token1, 'r');
         if (!p1) {
@@ -215,11 +218,7 @@ void assembleMov(const char *line, char *binStr) {
             return;
         }
         sscanf(p2, "(%[^)])", offBuf);
-        // For ld, immediate is unsigned; check for negative sign.
-        if (offBuf[0] == '-') {
-            fprintf(stderr, "Error: negative immediate not allowed for unsigned immediate in ld macro\n");
-            exit(1);
-        }
+        // For this form, the immediate is signed (negative allowed)
         imm = (int)strtol(offBuf, NULL, 0);
         if (token2[0] == 'r') {
             rs = (int)strtol(token2 + 1, NULL, 0);
@@ -228,14 +227,14 @@ void assembleMov(const char *line, char *binStr) {
             return;
         }
     } else {
-        // token1 should be "rD"
+        // Otherwise, token1 should be "rD"
         if (token1[0] != 'r') {
             strcpy(binStr, "ERROR");
             return;
         }
         rd = (int)strtol(token1 + 1, NULL, 0);
         if (token2[0] == '(') {
-            // Form 1: mov rD, (rS)(L) => opcode 0x10
+            // Form 1: "mov rD, (rS)(L)" => opcode 0x10
             opcode = 0x10;
             char regBuf[16], offBuf[16];
             char *p1 = strchr(token2, 'r');
@@ -251,14 +250,14 @@ void assembleMov(const char *line, char *binStr) {
                 return;
             }
             sscanf(p2, "(%[^)])", offBuf);
-            // Immediate here is signed.
+            // For this form, immediate is signed.
             imm = (int)strtol(offBuf, NULL, 0);
         } else if (token2[0] == 'r') {
-            // Form 2: mov rD, rS => opcode 0x11
+            // Form 2: "mov rD, rS" => opcode 0x11
             opcode = 0x11;
             rs = (int)strtol(token2 + 1, NULL, 0);
         } else {
-            // Form 3: mov rD, L => opcode 0x12; immediate must be unsigned.
+            // Form 3: "mov rD, L" => opcode 0x12; immediate must be unsigned.
             if (token2[0] == '-') {
                 fprintf(stderr, "Error: negative immediate not allowed for unsigned immediate in mov rd, L\n");
                 exit(1);
@@ -312,7 +311,6 @@ void populateInstMap() {
     addInst("shftl", 0x6,  "rd rs rt");
     addInst("shftli",0x7,  "rd L");
     addInst("br",    0x8,  "rd");
-    // Add brnz as per specification.
     addInst("brnz",  0xb,  "rd rs");
     // Call now only takes one operand ("rd")
     addInst("call",  0xc,  "rd");
@@ -348,34 +346,34 @@ void assembleStandard(const char *line, char *binStr) {
     int opcode = e->opcode, rd = 0, rs = 0, rt = 0, imm = 0;
 
     // For instructions with unsigned immediates, check for a leading '-'
-    if ( (strcmp(e->format, "rd L") == 0) && num >= 3 ) {
-        if(op2[0] == '-') {
+    if ((strcmp(e->format, "rd L") == 0) && num >= 3) {
+        if (op2[0] == '-') {
             fprintf(stderr, "Error: negative immediate not allowed for instruction %s\n", mnemonic);
             exit(1);
         }
     }
 
     if (strcmp(e->format, "rd rs rt") == 0 && num >= 4) {
-        rd = (op1[0]=='r') ? (int)strtol(op1+1, NULL, 0) : 0;
-        rs = (op2[0]=='r') ? (int)strtol(op2+1, NULL, 0) : 0;
-        rt = (op3[0]=='r') ? (int)strtol(op3+1, NULL, 0) : 0;
+        rd = (op1[0] == 'r') ? (int)strtol(op1 + 1, NULL, 0) : 0;
+        rs = (op2[0] == 'r') ? (int)strtol(op2 + 1, NULL, 0) : 0;
+        rt = (op3[0] == 'r') ? (int)strtol(op3 + 1, NULL, 0) : 0;
     }
     else if (strcmp(e->format, "rd L") == 0 && num >= 3) {
-        rd = (op1[0]=='r') ? (int)strtol(op1+1, NULL, 0) : 0;
+        rd = (op1[0] == 'r') ? (int)strtol(op1 + 1, NULL, 0) : 0;
         imm = (int)strtol(op2, NULL, 0);
     }
     else if (strcmp(e->format, "rd rs") == 0 && num >= 3) {
-        rd = (op1[0]=='r') ? (int)strtol(op1+1, NULL, 0) : 0;
-        rs = (op2[0]=='r') ? (int)strtol(op2+1, NULL, 0) : 0;
+        rd = (op1[0] == 'r') ? (int)strtol(op1 + 1, NULL, 0) : 0;
+        rs = (op2[0] == 'r') ? (int)strtol(op2 + 1, NULL, 0) : 0;
     }
     else if (strcmp(e->format, "rd rs rt L") == 0 && num >= 5) {
-        rd = (op1[0]=='r') ? (int)strtol(op1+1, NULL, 0) : 0;
-        rs = (op2[0]=='r') ? (int)strtol(op2+1, NULL, 0) : 0;
-        rt = (op3[0]=='r') ? (int)strtol(op3+1, NULL, 0) : 0;
+        rd = (op1[0] == 'r') ? (int)strtol(op1 + 1, NULL, 0) : 0;
+        rs = (op2[0] == 'r') ? (int)strtol(op2 + 1, NULL, 0) : 0;
+        rt = (op3[0] == 'r') ? (int)strtol(op3 + 1, NULL, 0) : 0;
         imm = (int)strtol(op4, NULL, 0);
     }
     else if (strcmp(e->format, "rd") == 0 && num >= 2) {
-        rd = (op1[0]=='r') ? (int)strtol(op1+1, NULL, 0) : 0;
+        rd = (op1[0] == 'r') ? (int)strtol(op1 + 1, NULL, 0) : 0;
     }
     else if (strcmp(e->format, "") == 0) {
         // e.g., "return" (no operands)
@@ -398,7 +396,6 @@ void assembleInstruction(const char *line, char *binStr) {
         assembleMov(line, binStr);
     }
     else if (strcmp(mnemonic, "brr") == 0) {
-        // Expect "brr <operand>"
         char dummy[16], operand[64];
         if (sscanf(line, "%15s %63s", dummy, operand) < 2) {
             strcpy(binStr, "ERROR");
@@ -426,7 +423,6 @@ void parseMacro(const char *line, FILE *fout) {
 
     // ---- LD macro ----
     if (!strcmp(op, "ld")) {
-        // Pattern: "ld r<regNum> ,?:?<immediateOrLabel>"
         const char *pattern = "^[[:space:]]*ld[[:space:]]+r([0-9]+)[[:space:]]*,?[[:space:]]*:?(\\S+)[[:space:]]*$";
         if (regcomp(&regex, pattern, REG_EXTENDED) != 0) {
             fprintf(fout, "%s\n", line);
@@ -444,12 +440,10 @@ void parseMacro(const char *line, FILE *fout) {
             len = matches[2].rm_eo - matches[2].rm_so;
             strncpy(immBuf, line + matches[2].rm_so, len);
             immBuf[len] = '\0';
-            // For ld, the immediate must be unsigned. If it starts with '-', error.
             if (immBuf[0] == '-') {
                 fprintf(stderr, "Error: negative immediate not allowed in ld macro\n");
                 exit(1);
             }
-            // If immBuf is not numeric, treat as a label.
             if (immBuf[0] < '0' || immBuf[0] > '9') {
                 LabelAddress *entry = findLabel(immBuf);
                 if (!entry) {
@@ -469,31 +463,24 @@ void parseMacro(const char *line, FILE *fout) {
                 }
                 imm = tmpVal;
             }
-
-            // Expand ld into its 12 instruction equivalent:
             fprintf(fout, "xor r%d r%d r%d\n", rD, rD, rD);
             unsigned long long top12  = (imm >> 52) & 0xFFF;
             unsigned long long mid12a = (imm >> 40) & 0xFFF;
             unsigned long long mid12b = (imm >> 28) & 0xFFF;
             unsigned long long mid12c = (imm >> 16) & 0xFFF;
-            unsigned long long mid4   = (imm >>  4) & 0xFFF;
+            unsigned long long mid4   = (imm >> 4)  & 0xFFF;
             unsigned long long last4  = imm & 0xF;
 
             fprintf(fout, "addi r%d %llu\n", rD, top12);
             fprintf(fout, "shftli r%d 12\n", rD);
-
             fprintf(fout, "addi r%d %llu\n", rD, mid12a);
             fprintf(fout, "shftli r%d 12\n", rD);
-
             fprintf(fout, "addi r%d %llu\n", rD, mid12b);
             fprintf(fout, "shftli r%d 12\n", rD);
-
             fprintf(fout, "addi r%d %llu\n", rD, mid12c);
             fprintf(fout, "shftli r%d 12\n", rD);
-
             fprintf(fout, "addi r%d %llu\n", rD, mid4);
             fprintf(fout, "shftli r%d 4\n", rD);
-
             fprintf(fout, "addi r%d %llu\n", rD, last4);
         } else {
             fprintf(fout, "%s\n", line);
@@ -688,7 +675,6 @@ void finalAssemble(const char *infile, const char *outfile) {
             char token[16];
             sscanf(line, "%15s", token);
 
-            // If it's a macro instruction:
             if ((strcmp(token, "ld") == 0)   ||
                 (strcmp(token, "push") == 0) ||
                 (strcmp(token, "pop") == 0)  ||
