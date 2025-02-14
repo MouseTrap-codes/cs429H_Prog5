@@ -48,11 +48,13 @@ void freeLabelMap() {
 
 // ---------------- Utility Functions ----------------
 void trim(char *s) {
+    // Remove leading whitespace.
     char *p = s;
     while (isspace((unsigned char)*p))
         p++;
     if (p != s)
         memmove(s, p, strlen(p)+1);
+    // Remove trailing whitespace.
     size_t len = strlen(s);
     while (len > 0 && isspace((unsigned char)s[len-1])) {
         s[len-1] = '\0';
@@ -310,14 +312,14 @@ void parseMacro(const char *line, FILE *fout) {
     regmatch_t matches[3];
     char op[16];
     if (sscanf(line, "%15s", op) != 1) {
-        fprintf(fout, "\t%s\n", line);
+        fprintf(fout, "%s\n", line);
         return;
     }
     if (!strcmp(op, "ld")) {
         // Updated pattern: optional colon, then either hex (with 0x) or decimal or label name.
         const char *pattern = "^[[:space:]]*ld[[:space:]]+r([0-9]+)[[:space:]]*,?[[:space:]]*:?(\\S+)[[:space:]]*$";
         if (regcomp(&regex, pattern, REG_EXTENDED) != 0) {
-            fprintf(fout, "\t%s\n", line);
+            fprintf(fout, "%s\n", line);
             return;
         }
         if (regexec(&regex, line, 3, matches, 0) == 0) {
@@ -351,34 +353,34 @@ void parseMacro(const char *line, FILE *fout) {
                 }
                 imm = tmpVal;
             }
-            // Expand ld into a series of instructions without commas.
-            fprintf(fout, "\txor r%d r%d r%d\n", rD, rD, rD);
+            // Expand ld into a series of instructions without trailing spaces.
+            fprintf(fout, "xor r%d r%d r%d\n", rD, rD, rD);
             unsigned long long top12  = (imm >> 52) & 0xFFF;
             unsigned long long mid12a = (imm >> 40) & 0xFFF;
             unsigned long long mid12b = (imm >> 28) & 0xFFF;
             unsigned long long mid12c = (imm >> 16) & 0xFFF;
             unsigned long long mid4   = (imm >> 4)  & 0xFFF;
             unsigned long long last4  = imm & 0xF;
-            fprintf(fout, "\taddi r%d %llu\n", rD, top12);
-            fprintf(fout, "\tshftli r%d 12\n", rD);
-            fprintf(fout, "\taddi r%d %llu\n", rD, mid12a);
-            fprintf(fout, "\tshftli r%d 12\n", rD);
-            fprintf(fout, "\taddi r%d %llu\n", rD, mid12b);
-            fprintf(fout, "\tshftli r%d 12\n", rD);
-            fprintf(fout, "\taddi r%d %llu\n", rD, mid12c);
-            fprintf(fout, "\tshftli r%d 12\n", rD);
-            fprintf(fout, "\taddi r%d %llu\n", rD, mid4);
-            fprintf(fout, "\tshftli r%d 4\n", rD);
-            fprintf(fout, "\taddi r%d %llu\n", rD, last4);
+            fprintf(fout, "addi r%d %llu\n", rD, top12);
+            fprintf(fout, "shftli r%d 12\n", rD);
+            fprintf(fout, "addi r%d %llu\n", rD, mid12a);
+            fprintf(fout, "shftli r%d 12\n", rD);
+            fprintf(fout, "addi r%d %llu\n", rD, mid12b);
+            fprintf(fout, "shftli r%d 12\n", rD);
+            fprintf(fout, "addi r%d %llu\n", rD, mid12c);
+            fprintf(fout, "shftli r%d 12\n", rD);
+            fprintf(fout, "addi r%d %llu\n", rD, mid4);
+            fprintf(fout, "shftli r%d 4\n", rD);
+            fprintf(fout, "addi r%d %llu\n", rD, last4);
         } else {
-            fprintf(fout, "\t%s\n", line);
+            fprintf(fout, "%s\n", line);
         }
         regfree(&regex);
     }
     else if (!strcmp(op, "push")) {
         const char *pattern = "^[[:space:]]*push[[:space:]]+r([0-9]+)[[:space:]]*,?[[:space:]]*$";
         if (regcomp(&regex, pattern, REG_EXTENDED) != 0) {
-            fprintf(fout, "\t%s\n", line);
+            fprintf(fout, "%s\n", line);
             return;
         }
         if (regexec(&regex, line, 2, matches, 0) == 0) {
@@ -388,17 +390,17 @@ void parseMacro(const char *line, FILE *fout) {
             strncpy(regBuf, line + matches[1].rm_so, len);
             regBuf[len] = '\0';
             rD = (int)strtol(regBuf, NULL, 0);
-            fprintf(fout, "\tmov (r31)(-8) r%d\n", rD);
-            fprintf(fout, "\tsubi r31 8\n");
+            fprintf(fout, "mov (r31)(-8) r%d\n", rD);
+            fprintf(fout, "subi r31 8\n");
         } else {
-            fprintf(fout, "\t%s\n", line);
+            fprintf(fout, "%s\n", line);
         }
         regfree(&regex);
     }
     else if (!strcmp(op, "pop")) {
         const char *pattern = "^[[:space:]]*pop[[:space:]]+r([0-9]+)[[:space:]]*,?[[:space:]]*$";
         if (regcomp(&regex, pattern, REG_EXTENDED) != 0) {
-            fprintf(fout, "\t%s\n", line);
+            fprintf(fout, "%s\n", line);
             return;
         }
         if (regexec(&regex, line, 2, matches, 0) == 0) {
@@ -408,17 +410,17 @@ void parseMacro(const char *line, FILE *fout) {
             strncpy(regBuf, line + matches[1].rm_so, len);
             regBuf[len] = '\0';
             rD = (int)strtol(regBuf, NULL, 0);
-            fprintf(fout, "\tmov r%d (r31)(0)\n", rD);
-            fprintf(fout, "\taddi r31 8\n");
+            fprintf(fout, "mov r%d (r31)(0)\n", rD);
+            fprintf(fout, "addi r31 8\n");
         } else {
-            fprintf(fout, "\t%s\n", line);
+            fprintf(fout, "%s\n", line);
         }
         regfree(&regex);
     }
     else if (!strcmp(op, "in")) {
         const char *pattern = "^[[:space:]]*in[[:space:]]+r([0-9]+)[[:space:]]*,?[[:space:]]*r([0-9]+)[[:space:]]*$";
         if (regcomp(&regex, pattern, REG_EXTENDED) != 0) {
-            fprintf(fout, "\t%s\n", line);
+            fprintf(fout, "%s\n", line);
             return;
         }
         if (regexec(&regex, line, 3, matches, 0) == 0) {
@@ -432,16 +434,16 @@ void parseMacro(const char *line, FILE *fout) {
             regBuf2[len] = '\0';
             rD = (int)strtol(regBuf, NULL, 0);
             rS = (int)strtol(regBuf2, NULL, 0);
-            fprintf(fout, "\tpriv r%d r%d r0 3\n", rD, rS);
+            fprintf(fout, "priv r%d r%d r0 3\n", rD, rS);
         } else {
-            fprintf(fout, "\t%s\n", line);
+            fprintf(fout, "%s\n", line);
         }
         regfree(&regex);
     }
     else if (!strcmp(op, "out")) {
         const char *pattern = "^[[:space:]]*out[[:space:]]+r([0-9]+)[[:space:]]*,?[[:space:]]*r([0-9]+)[[:space:]]*$";
         if (regcomp(&regex, pattern, REG_EXTENDED) != 0) {
-            fprintf(fout, "\t%s\n", line);
+            fprintf(fout, "%s\n", line);
             return;
         }
         if (regexec(&regex, line, 3, matches, 0) == 0) {
@@ -455,16 +457,16 @@ void parseMacro(const char *line, FILE *fout) {
             regBuf2[len] = '\0';
             rD = (int)strtol(regBuf, NULL, 0);
             rS = (int)strtol(regBuf2, NULL, 0);
-            fprintf(fout, "\tpriv r%d r%d r0 4\n", rD, rS);
+            fprintf(fout, "priv r%d r%d r0 4\n", rD, rS);
         } else {
-            fprintf(fout, "\t%s\n", line);
+            fprintf(fout, "%s\n", line);
         }
         regfree(&regex);
     }
     else if (!strcmp(op, "clr")) {
         const char *pattern = "^[[:space:]]*clr[[:space:]]+r([0-9]+)[[:space:]]*$";
         if (regcomp(&regex, pattern, REG_EXTENDED) != 0) {
-            fprintf(fout, "\t%s\n", line);
+            fprintf(fout, "%s\n", line);
             return;
         }
         if (regexec(&regex, line, 2, matches, 0) == 0) {
@@ -474,27 +476,27 @@ void parseMacro(const char *line, FILE *fout) {
             strncpy(regBuf, line + matches[1].rm_so, len);
             regBuf[len] = '\0';
             rD = (int)strtol(regBuf, NULL, 0);
-            fprintf(fout, "\txor r%d r%d r%d\n", rD, rD, rD);
+            fprintf(fout, "xor r%d r%d r%d\n", rD, rD, rD);
         } else {
-            fprintf(fout, "\t%s\n", line);
+            fprintf(fout, "%s\n", line);
         }
         regfree(&regex);
     }
     else if (!strcmp(op, "halt")) {
         const char *pattern = "^[[:space:]]*halt[[:space:]]*$";
         if (regcomp(&regex, pattern, REG_EXTENDED) != 0) {
-            fprintf(fout, "\t%s\n", line);
+            fprintf(fout, "%s\n", line);
             return;
         }
         if (regexec(&regex, line, 0, NULL, 0) == 0) {
-            fprintf(fout, "\tpriv r0 r0 r0 0\n");
+            fprintf(fout, "priv r0 r0 r0 0\n");
         } else {
-            fprintf(fout, "\t%s\n", line);
+            fprintf(fout, "%s\n", line);
         }
         regfree(&regex);
     }
     else {
-        fprintf(fout, "\t%s\n", line);
+        fprintf(fout, "%s\n", line);
     }
 }
 
@@ -519,10 +521,8 @@ void finalAssemble(const char *infile, const char *outfile) {
             continue;
         if (line[0] == '.') {
             if (strcmp(line, ".code") == 0) {
-                if (lastDirective != 0) {
-                    currentSection = CODE;
-                    lastDirective = 0;
-                }
+                currentSection = CODE;
+                lastDirective = 0;
             } else if (strcmp(line, ".data") == 0) {
                 currentSection = DATA;
                 lastDirective = 1;
@@ -568,18 +568,22 @@ void finalAssemble(const char *infile, const char *outfile) {
                     trim(expLine);
                     if (strlen(expLine) > 0) {
                         assembleInstruction(expLine, assembled);
+                        trim(assembled);
                         fprintf(fout, "%s\n", assembled);
                     }
                     expLine = strtok(NULL, "\n");
                 }
             } else if (strncmp(token, "mov", 3)==0) {
                 assembleMov(line, assembled);
+                trim(assembled);
                 fprintf(fout, "%s\n", assembled);
             } else if (strncmp(token, "brr", 3)==0) {
                 assembleBrr(line+4, assembled);
+                trim(assembled);
                 fprintf(fout, "%s\n", assembled);
             } else {
                 assembleInstruction(line, assembled);
+                trim(assembled);
                 fprintf(fout, "%s\n", assembled);
             }
         } else { // DATA section
@@ -589,6 +593,7 @@ void finalAssemble(const char *infile, const char *outfile) {
                 binData[63-i] = ((dVal >> i) & 1) ? '1' : '0';
             }
             binData[64] = '\0';
+            trim(binData);
             fprintf(fout, "%s\n", binData);
         }
     }
