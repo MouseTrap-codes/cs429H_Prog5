@@ -4,7 +4,7 @@
 #include <fcntl.h>      // File control (open, O_RDONLY)
 #include <sys/mman.h>   // Memory mapping (mmap, munmap)
 #include <sys/stat.h>   // File statistics (fstat)
-#include <unistd.h>     // Close file descriptor (close)
+#include <unistd.h>     // close, remove
 #include <ctype.h>      // Character classification (isspace)
 #include <errno.h>
 #include <regex.h>      // For regular expression handling
@@ -67,9 +67,8 @@ static void trim(char *s) {
 static int parse_signed_12_bit(const char *str, int *valueOut) {
     errno = 0;
     long val = strtol(str, NULL, 0); // allow 0x prefix
-    if ((errno == ERANGE) || (val < -2048) || (val > 2047)) {
-        return 0; // Out of range
-    }
+    if ((errno == ERANGE) || (val < -2048) || (val > 2047))
+        return 0;
     *valueOut = (int)val;
     return 1;
 }
@@ -77,9 +76,8 @@ static int parse_signed_12_bit(const char *str, int *valueOut) {
 static int parse_unsigned_12_bit(const char *str, int *valueOut) {
     errno = 0;
     unsigned long val = strtoul(str, NULL, 0); // allow 0x prefix
-    if ((errno == ERANGE) || (val > 4095)) {
-        return 0; // Out of range
-    }
+    if ((errno == ERANGE) || (val > 4095))
+        return 0;
     *valueOut = (int)val;
     return 1;
 }
@@ -91,9 +89,8 @@ static int starts_with_ld(const char *line) {
     while (isspace((unsigned char)*line)) { line++; }
     if (strncmp(line, "ld", 2) == 0) {
         char c = line[2];
-        if (c == '\0' || isspace((unsigned char)c) || c == ',') {
+        if (c == '\0' || isspace((unsigned char)c) || c == ',')
             return 1;
-        }
     }
     return 0;
 }
@@ -102,9 +99,8 @@ static int starts_with_push(const char *line) {
     while (isspace((unsigned char)*line)) { line++; }
     if (!strncmp(line, "push", 4)) {
         char c = line[4];
-        if (c == '\0' || isspace((unsigned char)c)) {
+        if (c == '\0' || isspace((unsigned char)c))
             return 1;
-        }
     }
     return 0;
 }
@@ -113,9 +109,8 @@ static int starts_with_pop(const char *line) {
     while (isspace((unsigned char)*line)) { line++; }
     if (!strncmp(line, "pop", 3)) {
         char c = line[3];
-        if (c == '\0' || isspace((unsigned char)c)) {
+        if (c == '\0' || isspace((unsigned char)c))
             return 1;
-        }
     }
     return 0;
 }
@@ -162,17 +157,21 @@ static int validate_mov(const char *line) {
         }
     }
     {
-        char *p = part1; 
+        char *p = part1;
         while (isspace((unsigned char)*p) || *p == ',') p++;
         if (p != part1) memmove(part1, p, strlen(p)+1);
         p = part2;
         while (isspace((unsigned char)*p) || *p == ',') p++;
         if (p != part2) memmove(part2, p, strlen(p)+1);
         for (int i = (int)strlen(part1)-1; i >= 0; i--) {
-            if (isspace((unsigned char)part1[i]) || part1[i] == ',') part1[i] = '\0'; else break;
+            if (isspace((unsigned char)part1[i]) || part1[i] == ',')
+                part1[i] = '\0';
+            else break;
         }
         for (int i = (int)strlen(part2)-1; i >= 0; i--) {
-            if (isspace((unsigned char)part2[i]) || part2[i] == ',') part2[i] = '\0'; else break;
+            if (isspace((unsigned char)part2[i]) || part2[i] == ',')
+                part2[i] = '\0';
+            else break;
         }
     }
     if (part1[0] == '(') {
@@ -202,15 +201,17 @@ static int validate_mov(const char *line) {
         }
         p++;
         char offsetBuf[32];
-        int i=0;
-        while (*p && *p != ')' && i < 31) { offsetBuf[i++] = *p++; }
+        int i = 0;
+        while (*p && *p != ')' && i < 31) {
+            offsetBuf[i++] = *p++;
+        }
         offsetBuf[i] = '\0';
         int offsetVal;
         if (!parse_signed_12_bit(offsetBuf, &offsetVal)) {
             fprintf(stderr, "Error: offset out of [-2048..2047] in 'mov (rD)(L), rS' => %s\n", offsetBuf);
             return 0;
         }
-        return 1; 
+        return 1;
     }
     if (part1[0] != 'r') {
         fprintf(stderr, "Error: mov => expected 'rD' or '(rD)(L)' => got: %s\n", part1);
@@ -251,15 +252,17 @@ static int validate_mov(const char *line) {
         }
         p++;
         char offsetBuf[32];
-        int i=0;
-        while (*p && *p != ')' && i < 31) { offsetBuf[i++] = *p++; }
+        int i = 0;
+        while (*p && *p != ')' && i < 31) {
+            offsetBuf[i++] = *p++;
+        }
         offsetBuf[i] = '\0';
         int offsetVal;
         if (!parse_signed_12_bit(offsetBuf, &offsetVal)) {
             fprintf(stderr, "Error: offset out of [-2048..2047] => %s\n", offsetBuf);
             return 0;
         }
-        return 1; 
+        return 1;
     }
     else {
         int val;
@@ -302,9 +305,8 @@ static int validate_instruction_immediate(const char *line) {
 
 static int is_valid_instruction_pass1(const char *line) {
     char op[32];
-    if (sscanf(line, "%31s", op) != 1) {
+    if (sscanf(line, "%31s", op) != 1)
         return 0;
-    }
     const char *ops[] = {
         "add","addi","sub","subi","mul","div",
         "and","or","xor","not","shftr","shftri","shftl","shftli",
@@ -322,24 +324,20 @@ static int is_valid_instruction_pass1(const char *line) {
             break;
         }
     }
-    if (!recognized) {
+    if (!recognized)
         return 0;
-    }
     if (!strcmp(op, "brr")) {
-        if (!validate_brr(line)) {
+        if (!validate_brr(line))
             return 0;
-        }
         return 1;
     }
     else if (!strcmp(op, "mov")) {
-        if (!validate_mov(line)) {
+        if (!validate_mov(line))
             return 0;
-        }
         return 1;
     }
-    if (!validate_instruction_immediate(line)) {
+    if (!validate_instruction_immediate(line))
         return 0;
-    }
     return 1;
 }
 
@@ -359,16 +357,13 @@ static void pass1(const char *filename) {
     while (fgets(line, sizeof(line), fin)) {
         line[strcspn(line, "\n")] = '\0';
         trim(line);
-        if (!line[0] || line[0] == ';') {
+        if (!line[0] || line[0] == ';')
             continue;
-        }
         if (line[0] == '.') {
-            if (!strncmp(line, ".code", 5)) {
+            if (!strncmp(line, ".code", 5))
                 section = CODE;
-            }
-            else if (!strncmp(line, ".data", 5)) {
+            else if (!strncmp(line, ".data", 5))
                 section = DATA;
-            }
             continue;
         }
         if (line[0] == ':') {
@@ -391,8 +386,7 @@ static void pass1(const char *filename) {
                 programCounter += 8;
             else
                 programCounter += 4;
-        } 
-        else if (section == DATA) {
+        } else if (section == DATA) {
             programCounter += 8;
         }
     }
@@ -411,7 +405,7 @@ static void expandOut(int rD, int rS, FILE *fout) {
 static void expandClr(int rD, FILE *fout) {
     fprintf(fout, "\txor r%d, r%d, r%d\n", rD, rD, rD);
 }
-// Now halt expands to the original "priv r0, r0, r0, 0" instruction.
+// Now halt expands to the original "priv r0, r0, r0, 0"
 static void expandHalt(FILE *fout) {
     fprintf(fout, "\tpriv r0, r0, r0, 0\n");
 }
@@ -638,9 +632,8 @@ static void parseMacro(const char *line, FILE *fout) {
 
 static int is_macro_line(const char *line) {
     char op[16];
-    if (sscanf(line, "%15s", op) != 1) {
+    if (sscanf(line, "%15s", op) != 1)
         return 0;
-    }
     if (!strcmp(op, "ld")   || !strcmp(op, "push") ||
         !strcmp(op, "pop")  || !strcmp(op, "in")   ||
         !strcmp(op, "out")  || !strcmp(op, "clr")  ||
@@ -670,10 +663,18 @@ static void pass2(const char *infile, const char *outfile) {
     while (fgets(line, sizeof(line), fin)) {
         line[strcspn(line, "\n")] = '\0';
         trim(line);
-        if (!line[0] || line[0] == ';') continue;
-        if (!strcmp(line, ".code")) { fprintf(fout, ".code\n"); continue; }
-        if (!strcmp(line, ".data")) { fprintf(fout, ".data\n"); continue; }
-        if (line[0] == ':') continue;
+        if (!line[0] || line[0] == ';')
+            continue;
+        if (!strcmp(line, ".code")) {
+            fprintf(fout, ".code\n");
+            continue;
+        }
+        if (!strcmp(line, ".data")) {
+            fprintf(fout, ".data\n");
+            continue;
+        }
+        if (line[0] == ':')
+            continue;
         char *colon = strchr(line, ':');
         if (colon) {
             char lbl[50];
@@ -683,11 +684,10 @@ static void pass2(const char *infile, const char *outfile) {
                     *colon = '\0';
                     char buffer[1024];
                     snprintf(buffer, sizeof(buffer), "\t%s%d", line, entry->address);
-                    if (is_macro_line(buffer)) {
+                    if (is_macro_line(buffer))
                         parseMacro(buffer, fout);
-                    } else {
+                    else
                         fprintf(fout, "%s\n", buffer);
-                    }
                     continue;
                 } else {
                     fprintf(stderr, "Warning: label '%s' not found.\n", lbl);
@@ -696,11 +696,10 @@ static void pass2(const char *infile, const char *outfile) {
                 }
             }
         }
-        if (is_macro_line(line)) {
+        if (is_macro_line(line))
             parseMacro(line, fout);
-        } else {
+        else
             fprintf(fout, "\t%s\n", line);
-        }
     }
     fclose(fin);
     fclose(fout);
@@ -757,7 +756,7 @@ void populateTinkerInstruction() {
     addInstruction("call",  0xc, "rd rs rt");
     addInstruction("return",0xd, "");
     addInstruction("brgt",  0xe, "rd rs rt");
-    // Privileged instruction for halt expansion: "priv r0, r0, r0, 0"
+    // Privileged instruction for halt expansion:
     addInstruction("priv",  0xf, "rd rs rt L");
     // Data movement instructions
     addInstruction("mov",   0x10, "rd rs L");
@@ -783,7 +782,9 @@ void free_instruction_table() {
  * Helper: Skip leading whitespace.
  ******************************************************************************/
 const char *skip_whitespace(const char *s) {
-    while (*s && isspace((unsigned char)*s)) { s++; }
+    while (*s && isspace((unsigned char)*s)) {
+        s++;
+    }
     return s;
 }
 
@@ -833,42 +834,59 @@ char *assemble_instruction(const char *assembly_line) {
 }
 
 /******************************************************************************
- * Parse the input file and output only the binary code.
+ * New parse_and_assemble_file: Process .tk file line by line, and based on the
+ * current section (code vs data) assemble the line appropriately.
+ * In the code section, instructions are assembled into 32-bit binary strings.
+ * In the data section, 64-bit data items are converted into 64-bit binary strings.
  ******************************************************************************/
 void parse_and_assemble_file(const char *input_filename, const char *output_filename) {
-    int fd = open(input_filename, O_RDONLY);
-    if (fd == -1) { perror("Error opening input file"); return; }
-    struct stat sb;
-    if (fstat(fd, &sb) == -1) { perror("Error getting file size"); close(fd); return; }
-    size_t file_size = sb.st_size;
-    char *mapped = mmap(NULL, file_size, PROT_READ, MAP_PRIVATE, fd, 0);
-    if (mapped == MAP_FAILED) { perror("Error mmapping input file"); close(fd); return; }
-    FILE *output_file = fopen(output_filename, "w");
-    if (!output_file) { perror("Error opening output file"); munmap(mapped, file_size); close(fd); return; }
-    char *start = mapped;
-    for (size_t i = 0; i < file_size; i++) {
-        if (mapped[i] == '\n' || i == file_size - 1) {
-            size_t line_length = &mapped[i] - start + 1;
-            char line[line_length + 1];
-            memcpy(line, start, line_length);
-            line[line_length] = '\0';
-            const char *trimmed = skip_whitespace(line);
-            if (strncmp(trimmed, ".code", 5) == 0 || strncmp(trimmed, ".data", 5) == 0) {
-                start = &mapped[i] + 1;
-                continue;
-            }
+    FILE *fp = fopen(input_filename, "r");
+    if (!fp) {
+        perror("Error opening input file");
+        return;
+    }
+    FILE *out = fopen(output_filename, "w");
+    if (!out) {
+        perror("Error opening output file");
+        fclose(fp);
+        return;
+    }
+    int current_section = 0; // 0 for code, 1 for data. Default to code.
+    char line[1024];
+    while (fgets(line, sizeof(line), fp)) {
+        line[strcspn(line, "\n")] = '\0';
+        trim(line);
+        if (strlen(line) == 0)
+            continue;
+        if (strncmp(line, ".code", 5) == 0) {
+            current_section = 0;
+            continue;
+        }
+        if (strncmp(line, ".data", 5) == 0) {
+            current_section = 1;
+            continue;
+        }
+        if (current_section == 0) {
+            // Code section: assemble instruction (32-bit)
             char *binary = assemble_instruction(line);
-            if (binary) {
-                fprintf(output_file, "%s\n", binary);
-            } else {
-                fprintf(output_file, "Error: Could not assemble line: %s\n", line);
+            if (binary)
+                fprintf(out, "%s\n", binary);
+            else
+                fprintf(out, "Error: Could not assemble line: %s\n", line);
+        } else {
+            // Data section: treat line as a 64-bit data item.
+            // The line should be a number (already label-resolved)
+            unsigned long long data_val = strtoull(line, NULL, 0);
+            char data_binary[65];
+            for (int i = 63; i >= 0; i--) {
+                data_binary[63 - i] = ((data_val >> i) & 1) ? '1' : '0';
             }
-            start = &mapped[i] + 1;
+            data_binary[64] = '\0';
+            fprintf(out, "%s\n", data_binary);
         }
     }
-    fclose(output_file);
-    munmap(mapped, file_size);
-    close(fd);
+    fclose(fp);
+    fclose(out);
 }
 
 /******************************************************************************
@@ -884,7 +902,10 @@ int main(int argc, char *argv[]) {
     pass1(argv[1]);
     char temp_filename[] = "tempXXXXXX";
     int temp_fd = mkstemp(temp_filename);
-    if (temp_fd == -1) { perror("mkstemp failed"); exit(1); }
+    if (temp_fd == -1) {
+        perror("mkstemp failed");
+        exit(1);
+    }
     close(temp_fd);
     pass2(argv[1], temp_filename);
     free_hashmap();
