@@ -159,17 +159,17 @@ void assembleMov(const char *line, char *binStr) {
         char *p1 = strchr(token1, 'r');
         if (!p1) { strcpy(binStr, "ERROR"); return; }
         sscanf(p1, "r%[^)]", regBuf);
-        rd = atoi(regBuf);
+        rd = (int)strtol(regBuf, NULL, 0);
         char *p2 = strchr(p1, '(');
         if (!p2) { strcpy(binStr, "ERROR"); return; }
         sscanf(p2, "(%[^)])", offBuf);
         imm = (int)strtol(offBuf, NULL, 0);
         if (token2[0] == 'r')
-            rs = atoi(token2+1);
+            rs = (int)strtol(token2+1, NULL, 0);
         else { strcpy(binStr, "ERROR"); return; }
     } else {
         if (token1[0] != 'r') { strcpy(binStr, "ERROR"); return; }
-        rd = atoi(token1+1);
+        rd = (int)strtol(token1+1, NULL, 0);
         if (token2[0] == '(') {
             // Form 1: mov rD, (rS)(L) => opcode 0x10.
             opcode = 0x10;
@@ -177,7 +177,7 @@ void assembleMov(const char *line, char *binStr) {
             char *p1 = strchr(token2, 'r');
             if (!p1) { strcpy(binStr, "ERROR"); return; }
             sscanf(p1, "r%[^)]", regBuf);
-            rs = atoi(regBuf);
+            rs = (int)strtol(regBuf, NULL, 0);
             char *p2 = strchr(p1, '(');
             if (!p2) { strcpy(binStr, "ERROR"); return; }
             sscanf(p2, "(%[^)])", offBuf);
@@ -185,7 +185,7 @@ void assembleMov(const char *line, char *binStr) {
         } else if (token2[0] == 'r') {
             // Form 2: mov rD, rS => opcode 0x11.
             opcode = 0x11;
-            rs = atoi(token2+1);
+            rs = (int)strtol(token2+1, NULL, 0);
         } else {
             // Form 3: mov rD, L => opcode 0x12.
             opcode = 0x12;
@@ -263,14 +263,14 @@ void assembleStandard(const char *line, char *binStr) {
         return;
     }
     int opcode = e->opcode, rd = 0, rs = 0, rt = 0, imm = 0;
-    if (strcmp(e->format, "rd rs rt") == 0 && num == 4) {
+    if (strcmp(e->format, "rd rs rt") == 0 && num >= 4) {
         rd = (op1[0]=='r') ? (int)strtol(op1+1, NULL, 0) : 0;
         rs = (op2[0]=='r') ? (int)strtol(op2+1, NULL, 0) : 0;
         rt = (op3[0]=='r') ? (int)strtol(op3+1, NULL, 0) : 0;
-    } else if (strcmp(e->format, "rd L") == 0 && num == 3) {
+    } else if (strcmp(e->format, "rd L") == 0 && num >= 3) {
         rd = (op1[0]=='r') ? (int)strtol(op1+1, NULL, 0) : 0;
         imm = (int)strtol(op2, NULL, 0);
-    } else if (strcmp(e->format, "rd rs") == 0 && num == 3) {
+    } else if (strcmp(e->format, "rd rs") == 0 && num >= 3) {
         rd = (op1[0]=='r') ? (int)strtol(op1+1, NULL, 0) : 0;
         rs = (op2[0]=='r') ? (int)strtol(op2+1, NULL, 0) : 0;
     } else if (strcmp(e->format, "") == 0) {
@@ -307,19 +307,20 @@ void assembleInstruction(const char *line, char *binStr) {
 // (Supported macros: ld, push, pop, in, out, clr, halt)
 void parseMacro(const char *line, FILE *fout) {
     regex_t regex;
-    regmatch_t matches[4];
+    regmatch_t matches[3];
     char op[16];
     if (sscanf(line, "%15s", op) != 1) {
         fprintf(fout, "\t%s\n", line);
         return;
     }
     if (!strcmp(op, "ld")) {
-        const char *pattern = "^[[:space:]]*ld[[:space:]]+r([0-9]+)[[:space:]]*,?[[:space:]]*(:?)([0-9a-fA-FxX:]+)[[:space:]]*$";
+        // Updated pattern: optional colon, then either hex (with 0x) or decimal or label name.
+        const char *pattern = "^[[:space:]]*ld[[:space:]]+r([0-9]+)[[:space:]]*,?[[:space:]]*:?(\\S+)[[:space:]]*$";
         if (regcomp(&regex, pattern, REG_EXTENDED) != 0) {
             fprintf(fout, "\t%s\n", line);
             return;
         }
-        if (regexec(&regex, line, 4, matches, 0) == 0) {
+        if (regexec(&regex, line, 3, matches, 0) == 0) {
             char regBuf[16], immBuf[64];
             int rD;
             uint64_t imm;
@@ -327,13 +328,14 @@ void parseMacro(const char *line, FILE *fout) {
             strncpy(regBuf, line + matches[1].rm_so, len);
             regBuf[len] = '\0';
             rD = (int)strtol(regBuf, NULL, 0);
-            len = matches[3].rm_eo - matches[3].rm_so;
-            strncpy(immBuf, line + matches[3].rm_so, len);
+            len = matches[2].rm_eo - matches[2].rm_so;
+            strncpy(immBuf, line + matches[2].rm_so, len);
             immBuf[len] = '\0';
-            if (immBuf[0] == ':') {
-                LabelAddress *entry = findLabel(immBuf + 1);
+            if (immBuf[0] < '0' || immBuf[0] > '9') {
+                // Treat as a label.
+                LabelAddress *entry = findLabel(immBuf);
                 if (!entry) {
-                    fprintf(stderr, "Error: label %s not found\n", immBuf+1);
+                    fprintf(stderr, "Error: label %s not found\n", immBuf);
                     regfree(&regex);
                     return;
                 }
@@ -349,24 +351,25 @@ void parseMacro(const char *line, FILE *fout) {
                 }
                 imm = tmpVal;
             }
-            fprintf(fout, "\txor r%d, r%d, r%d\n", rD, rD, rD);
+            // Expand ld into a series of instructions without commas.
+            fprintf(fout, "\txor r%d r%d r%d\n", rD, rD, rD);
             unsigned long long top12  = (imm >> 52) & 0xFFF;
             unsigned long long mid12a = (imm >> 40) & 0xFFF;
             unsigned long long mid12b = (imm >> 28) & 0xFFF;
             unsigned long long mid12c = (imm >> 16) & 0xFFF;
             unsigned long long mid4   = (imm >> 4)  & 0xFFF;
             unsigned long long last4  = imm & 0xF;
-            fprintf(fout, "\taddi r%d, %llu\n", rD, top12);
-            fprintf(fout, "\tshftli r%d, 12\n", rD);
-            fprintf(fout, "\taddi r%d, %llu\n", rD, mid12a);
-            fprintf(fout, "\tshftli r%d, 12\n", rD);
-            fprintf(fout, "\taddi r%d, %llu\n", rD, mid12b);
-            fprintf(fout, "\tshftli r%d, 12\n", rD);
-            fprintf(fout, "\taddi r%d, %llu\n", rD, mid12c);
-            fprintf(fout, "\tshftli r%d, 12\n", rD);
-            fprintf(fout, "\taddi r%d, %llu\n", rD, mid4);
-            fprintf(fout, "\tshftli r%d, 4\n", rD);
-            fprintf(fout, "\taddi r%d, %llu\n", rD, last4);
+            fprintf(fout, "\taddi r%d %llu\n", rD, top12);
+            fprintf(fout, "\tshftli r%d 12\n", rD);
+            fprintf(fout, "\taddi r%d %llu\n", rD, mid12a);
+            fprintf(fout, "\tshftli r%d 12\n", rD);
+            fprintf(fout, "\taddi r%d %llu\n", rD, mid12b);
+            fprintf(fout, "\tshftli r%d 12\n", rD);
+            fprintf(fout, "\taddi r%d %llu\n", rD, mid12c);
+            fprintf(fout, "\tshftli r%d 12\n", rD);
+            fprintf(fout, "\taddi r%d %llu\n", rD, mid4);
+            fprintf(fout, "\tshftli r%d 4\n", rD);
+            fprintf(fout, "\taddi r%d %llu\n", rD, last4);
         } else {
             fprintf(fout, "\t%s\n", line);
         }
@@ -385,8 +388,8 @@ void parseMacro(const char *line, FILE *fout) {
             strncpy(regBuf, line + matches[1].rm_so, len);
             regBuf[len] = '\0';
             rD = (int)strtol(regBuf, NULL, 0);
-            fprintf(fout, "\tmov (r31)(-8), r%d\n", rD);
-            fprintf(fout, "\tsubi r31, 8\n");
+            fprintf(fout, "\tmov (r31)(-8) r%d\n", rD);
+            fprintf(fout, "\tsubi r31 8\n");
         } else {
             fprintf(fout, "\t%s\n", line);
         }
@@ -405,8 +408,8 @@ void parseMacro(const char *line, FILE *fout) {
             strncpy(regBuf, line + matches[1].rm_so, len);
             regBuf[len] = '\0';
             rD = (int)strtol(regBuf, NULL, 0);
-            fprintf(fout, "\tmov r%d, (r31)(0)\n", rD);
-            fprintf(fout, "\taddi r31, 8\n");
+            fprintf(fout, "\tmov r%d (r31)(0)\n", rD);
+            fprintf(fout, "\taddi r31 8\n");
         } else {
             fprintf(fout, "\t%s\n", line);
         }
@@ -429,7 +432,7 @@ void parseMacro(const char *line, FILE *fout) {
             regBuf2[len] = '\0';
             rD = (int)strtol(regBuf, NULL, 0);
             rS = (int)strtol(regBuf2, NULL, 0);
-            fprintf(fout, "\tpriv r%d, r%d, r0, 3\n", rD, rS);
+            fprintf(fout, "\tpriv r%d r%d r0 3\n", rD, rS);
         } else {
             fprintf(fout, "\t%s\n", line);
         }
@@ -452,7 +455,7 @@ void parseMacro(const char *line, FILE *fout) {
             regBuf2[len] = '\0';
             rD = (int)strtol(regBuf, NULL, 0);
             rS = (int)strtol(regBuf2, NULL, 0);
-            fprintf(fout, "\tpriv r%d, r%d, r0, 4\n", rD, rS);
+            fprintf(fout, "\tpriv r%d r%d r0 4\n", rD, rS);
         } else {
             fprintf(fout, "\t%s\n", line);
         }
@@ -471,7 +474,7 @@ void parseMacro(const char *line, FILE *fout) {
             strncpy(regBuf, line + matches[1].rm_so, len);
             regBuf[len] = '\0';
             rD = (int)strtol(regBuf, NULL, 0);
-            fprintf(fout, "\txor r%d, r%d, r%d\n", rD, rD, rD);
+            fprintf(fout, "\txor r%d r%d r%d\n", rD, rD, rD);
         } else {
             fprintf(fout, "\t%s\n", line);
         }
@@ -484,7 +487,7 @@ void parseMacro(const char *line, FILE *fout) {
             return;
         }
         if (regexec(&regex, line, 0, NULL, 0) == 0) {
-            fprintf(fout, "\tpriv r0, r0, r0, 0\n");
+            fprintf(fout, "\tpriv r0 r0 r0 0\n");
         } else {
             fprintf(fout, "\t%s\n", line);
         }
@@ -528,7 +531,7 @@ void finalAssemble(const char *infile, const char *outfile) {
         }
         if (line[0] == ':')
             continue;
-        // Label substitution: replace ":<label>" with its address.
+        // Label substitution: replace ":<label>" with its address in hex.
         char *col = strchr(line, ':');
         if (col) {
             char lab[50];
@@ -537,7 +540,7 @@ void finalAssemble(const char *infile, const char *outfile) {
                 if (entry) {
                     *col = '\0';
                     char temp[128];
-                    sprintf(temp, "%s%d", line, entry->address);
+                    sprintf(temp, "%s0x%x", line, entry->address);
                     strcpy(line, temp);
                 }
             }
