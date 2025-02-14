@@ -251,7 +251,7 @@ void assembleMov(const char *line, char *binStr) {
                 return;
             }
             sscanf(p2, "(%[^)])", offBuf);
-            // For this form, immediate is signed so negative is allowed.
+            // Immediate here is signed.
             imm = (int)strtol(offBuf, NULL, 0);
         } else if (token2[0] == 'r') {
             // Form 2: mov rD, rS => opcode 0x11
@@ -312,6 +312,8 @@ void populateInstMap() {
     addInst("shftl", 0x6,  "rd rs rt");
     addInst("shftli",0x7,  "rd L");
     addInst("br",    0x8,  "rd");
+    // Add brnz as per specification.
+    addInst("brnz",  0xb,  "rd rs");
     // Call now only takes one operand ("rd")
     addInst("call",  0xc,  "rd");
     addInst("return",0xd,  "");
