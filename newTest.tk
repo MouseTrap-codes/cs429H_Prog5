@@ -1,0 +1,37 @@
+.code
+    add r1, r2, r3
+    addi r1, 10
+    sub r4, r5, r6
+    subi r4, 5
+    mul r7, r8, r9
+    div r10, r11, r12
+    and r13, r14, r15
+    or r16, r17, r18
+    xor r19, r20, r21
+    not r22, r23
+    shftr r24, r25, r26
+    shftri r27, 3
+    shftl r28, r29, r30
+    shftli r31, 2
+    br r1
+    brr r2
+    brr -4
+    brnz r3, r4
+    call r5
+    return
+    brgt r8, r9, r10
+    priv r11, r12, r13, 0
+    mov r14, (r15)(4)
+    mov r16, r17
+    mov r18, 8
+    mov (r19)(2), r20
+    addf r21, r22, r23
+    subf r24, r25, r26
+    mulf r27, r28, r29
+    divf r30, r31, r1
+    in r1, r2
+    out r3, r4
+    clr r5
+    ld r6, 15
+    push r7
+    pop r8

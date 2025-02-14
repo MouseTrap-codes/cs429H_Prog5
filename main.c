@@ -629,10 +629,6 @@ static int is_macro_line(const char *line) {
     return 0;
 }
 
-/*--------------------------------------------------------------
-   Modified Pass 2: Macro Expansion and Label Substitution with
-   Adjacent .code Sections Combined (unless separated by .data)
---------------------------------------------------------------*/
 static void pass2(const char *infile, const char *outfile) {
     FILE *fin = fopen(infile, "r");
     if (!fin) {
@@ -646,26 +642,18 @@ static void pass2(const char *infile, const char *outfile) {
         exit(1);
     }
     char line[1024];
-    /* Use cur_section to combine adjacent .code directives */
-    enum { NONE, CODE, DATA } cur_section = NONE;
     while (fgets(line, sizeof(line), fin)) {
         line[strcspn(line, "\n")] = '\0';
         trim(line);
         if (!line[0] || line[0] == ';')
             continue;
-        if (line[0] == '.') {
-            if (strcmp(line, ".code") == 0) {
-                if (cur_section != CODE) {
-                    fprintf(fout, ".code\n");
-                    cur_section = CODE;
-                }
-                continue;
-            }
-            if (strcmp(line, ".data") == 0) {
-                fprintf(fout, ".data\n");
-                cur_section = DATA;
-                continue;
-            }
+        if (!strcmp(line, ".code")) {
+            fprintf(fout, ".code\n");
+            continue;
+        }
+        if (!strcmp(line, ".data")) {
+            fprintf(fout, ".data\n");
+            continue;
         }
         if (line[0] == ':')
             continue;
@@ -881,7 +869,6 @@ uint32_t encode_instruction(char *line) {
    a binary object file (.tko). It runs three passes:
    1. Label resolution and validation.
    2. Macro expansion and label substitution (producing an intermediate file).
-      (Adjacent .code sections are combined unless separated by a .data section.)
    3. Binary encoding (instructions as 32-bit words, data as 64-bit words).
 --------------------------------------------------------------*/
 
