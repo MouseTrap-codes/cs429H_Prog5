@@ -153,6 +153,7 @@ void intToBinaryStr(unsigned int value, int width, char *outStr) {
     outStr[width] = '\0';
 }
 
+// Helper: convert a binary string (32 characters of '0'/'1') to a uint32_t value.
 uint32_t binStrToUint32(const char *binStr) {
     uint32_t value = 0;
     for (int i = 0; i < 32; i++) {
@@ -165,30 +166,16 @@ uint32_t binStrToUint32(const char *binStr) {
 }
 
 // ---------------- Custom Assembly Routines ----------------
-// Validate a register operand (e.g. "r5") and ensure it's in the range 0..31.
-int validateRegister(const char *regStr) {
-    if (regStr[0] != 'r') {
-        fprintf(stderr, "Error: Invalid register operand %s\n", regStr);
-        exit(1);
-    }
-    char *endptr;
-    long reg = strtol(regStr + 1, &endptr, 10);
-    if (*endptr != '\0' || reg < 0 || reg > 31) {
-        fprintf(stderr, "Error: Invalid register %s\n", regStr);
-        exit(1);
-    }
-    return (int)reg;
-}
-
 // brr: if operand begins with 'r', use opcode 0x9; otherwise, use opcode 0xa.
 void assembleBrr(const char *operand, char *binStr) {
     while (isspace((unsigned char)*operand)) {
         operand++;
     }
+
     int opcode, reg = 0, imm = 0;
     if (operand[0] == 'r') {
         opcode = 0x9;
-        reg = validateRegister(operand);
+        reg = (int)strtol(operand + 1, NULL, 0);
     } else {
         opcode = 0xa;
         imm = (int)strtol(operand, NULL, 0);
@@ -199,64 +186,76 @@ void assembleBrr(const char *operand, char *binStr) {
 
 // mov: custom routine for MOV instructions.
 // It distinguishes between:
-//   - Form 4: "mov (rD)(L), rS" => opcode 0x13 (store to memory); immediate is signed.
-//   - Form 1: "mov rD, (rS)(L)" => opcode 0x10 (load from memory); immediate is signed.
-//   - Form 2: "mov rD, rS" => opcode 0x11.
-//   - Form 3: "mov rD, L" => opcode 0x12; immediate must be unsigned.
+//   - Form 4: "mov (rD)(L), rS" => opcode 0x13 (store to memory)
+//   - Form 1: "mov rD, (rS)(L)" => opcode 0x10 (load from memory)
+//   - Form 2: "mov rD, rS" => opcode 0x11
+//   - Form 3: "mov rD, L" => opcode 0x12 (immediate must be unsigned)
 void assembleMov(const char *line, char *binStr) {
     char mnemonic[10], token1[64], token2[64];
     if (sscanf(line, "%s %63[^,], %63s", mnemonic, token1, token2) < 3) {
-        fprintf(stderr, "Error: Invalid arguments for instruction mov\n");
-        exit(1);
+        strcpy(binStr, "ERROR");
+        return;
     }
     trim(token1);
     trim(token2);
+
     int opcode = 0, rd = 0, rs = 0, rt = 0, imm = 0;
+
+    // If token1 begins with '(' then it's Form 4: "mov (rD)(L), rS"
     if (token1[0] == '(') {
-        // Form 4: mov (rD)(L), rS
         opcode = 0x13;
         char regBuf[16], offBuf[16];
         char *p1 = strchr(token1, 'r');
-        rd = validateRegister(p1);
+        if (!p1) {
+            strcpy(binStr, "ERROR");
+            return;
+        }
+        sscanf(p1, "r%[^)]", regBuf);
+        rd = (int)strtol(regBuf, NULL, 0);
         char *p2 = strchr(p1, '(');
         if (!p2) {
-            fprintf(stderr, "Error: Invalid format in mov macro\n");
-            exit(1);
+            strcpy(binStr, "ERROR");
+            return;
         }
         sscanf(p2, "(%[^)])", offBuf);
-        imm = (int)strtol(offBuf, NULL, 0);
+        imm = (int)strtol(offBuf, NULL, 0);  // immediate is signed in this form.
         if (token2[0] == 'r') {
-            rs = validateRegister(token2);
+            rs = (int)strtol(token2 + 1, NULL, 0);
         } else {
-            fprintf(stderr, "Error: Expected register in mov macro\n");
-            exit(1);
+            strcpy(binStr, "ERROR");
+            return;
         }
     } else {
-        // Otherwise, token1 should be "rD"
+        // Otherwise token1 should be "rD"
         if (token1[0] != 'r') {
             strcpy(binStr, "ERROR");
-            exit(1);
+            return;
         }
-        rd = validateRegister(token1);
+        rd = (int)strtol(token1 + 1, NULL, 0);
         if (token2[0] == '(') {
-            // Form 1: mov rD, (rS)(L)
+            // Form 1: "mov rD, (rS)(L)" => opcode 0x10
             opcode = 0x10;
             char regBuf[16], offBuf[16];
             char *p1 = strchr(token2, 'r');
-            rs = validateRegister(p1);
+            if (!p1) {
+                strcpy(binStr, "ERROR");
+                return;
+            }
+            sscanf(p1, "r%[^)]", regBuf);
+            rs = (int)strtol(regBuf, NULL, 0);
             char *p2 = strchr(p1, '(');
             if (!p2) {
-                fprintf(stderr, "Error: Invalid format in mov\n");
-                exit(1);
+                strcpy(binStr, "ERROR");
+                return;
             }
             sscanf(p2, "(%[^)])", offBuf);
             imm = (int)strtol(offBuf, NULL, 0);
         } else if (token2[0] == 'r') {
-            // Form 2: mov rD, rS
+            // Form 2: "mov rD, rS" => opcode 0x11
             opcode = 0x11;
-            rs = validateRegister(token2);
+            rs = (int)strtol(token2 + 1, NULL, 0);
         } else {
-            // Form 3: mov rD, L (unsigned immediate)
+            // Form 3: "mov rD, L" => opcode 0x12; immediate must be unsigned.
             if (token2[0] == '-') {
                 fprintf(stderr, "Error: negative immediate not allowed for unsigned immediate in mov rd, L\n");
                 exit(1);
@@ -265,6 +264,7 @@ void assembleMov(const char *line, char *binStr) {
             imm = (int)strtol(token2, NULL, 0);
         }
     }
+
     unsigned int inst = (opcode << 27) | (rd << 22) | (rs << 17) | (rt << 12) | (imm & 0xFFF);
     intToBinaryStr(inst, 32, binStr);
 }
@@ -310,7 +310,7 @@ void populateInstMap() {
     addInst("shftli",0x7,  "rd L");
     addInst("br",    0x8,  "rd");
     addInst("brnz",  0xb,  "rd rs");
-    // call now only takes one operand ("rd")
+    // Call now only takes one operand ("rd")
     addInst("call",  0xc,  "rd");
     addInst("return",0xd,  "");
     addInst("brgt",  0xe,  "rd rs rt");
@@ -330,70 +330,58 @@ void freeInstMap() {
     }
 }
 
-// Helper: count tokens in a line (split by whitespace and commas)
-int countTokens(const char *line) {
-    int count = 0;
-    char copy[256];
-    strncpy(copy, line, sizeof(copy));
-    copy[sizeof(copy)-1] = '\0';
-    char *token = strtok(copy, " ,\t");
-    while (token) {
-        count++;
-        token = strtok(NULL, " ,\t");
-    }
-    return count;
-}
-
-// Assemble standard instructions using the instMap.
-// We validate that the token count exactly matches the expected count for each instruction.
+// Assemble standard instructions using the instMap
 void assembleStandard(const char *line, char *binStr) {
     char mnemonic[16], op1[16], op2[16], op3[16], op4[16];
     int num = sscanf(line, "%15s %15s %15s %15s %15s", mnemonic, op1, op2, op3, op4);
+
     InstructionEntry *e = NULL;
     HASH_FIND_STR(instMap, mnemonic, e);
     if (!e) {
-        fprintf(stderr, "Error: Invalid mnemonic %s\n", mnemonic);
-        exit(1);
-    }
-    int expected = 0;
-    if (strcmp(e->format, "rd rs rt") == 0) expected = 4;
-    else if (strcmp(e->format, "rd L") == 0) expected = 3;
-    else if (strcmp(e->format, "rd rs") == 0) expected = 3;
-    else if (strcmp(e->format, "rd rs rt L") == 0) expected = 5;
-    else if (strcmp(e->format, "rd") == 0) expected = 2;
-    else if (strcmp(e->format, "") == 0) expected = 1;
-    if (num != expected) {
-        fprintf(stderr, "Error: Invalid arguments for instruction %s\n", mnemonic);
-        exit(1);
-    }
-    int rd = 0, rs = 0, rt = 0, imm = 0;
-    if (strcmp(e->format, "rd rs rt") == 0) {
-        rd = validateRegister(op1);
-        rs = validateRegister(op2);
-        rt = validateRegister(op3);
-    } else if (strcmp(e->format, "rd L") == 0) {
-        rd = validateRegister(op1);
-        if (!parseUnsigned12(op2, &imm)) {
-            fprintf(stderr, "Error: Invalid unsigned immediate for instruction %s\n", mnemonic);
-            exit(1);
-        }
-    } else if (strcmp(e->format, "rd rs") == 0) {
-        rd = validateRegister(op1);
-        rs = validateRegister(op2);
-    } else if (strcmp(e->format, "rd rs rt L") == 0) {
-        rd = validateRegister(op1);
-        rs = validateRegister(op2);
-        rt = validateRegister(op3);
-        imm = (int)strtol(op4, NULL, 0);
-    } else if (strcmp(e->format, "rd") == 0) {
-        rd = validateRegister(op1);
-    } else if (strcmp(e->format, "") == 0) {
-        // e.g., "return" (no operands)
-    } else {
         strcpy(binStr, "ERROR");
         return;
     }
-    unsigned int inst = (e->opcode << 27) | (rd << 22) | (rs << 17) | (rt << 12) | (imm & 0xFFF);
+    int opcode = e->opcode, rd = 0, rs = 0, rt = 0, imm = 0;
+
+    // For instructions with unsigned immediates, check for a leading '-'
+    if ((strcmp(e->format, "rd L") == 0) && num >= 3) {
+        if (op2[0] == '-') {
+            fprintf(stderr, "Error: negative immediate not allowed for instruction %s\n", mnemonic);
+            exit(1);
+        }
+    }
+
+    if (strcmp(e->format, "rd rs rt") == 0 && num >= 4) {
+        rd = (op1[0] == 'r') ? (int)strtol(op1 + 1, NULL, 0) : 0;
+        rs = (op2[0] == 'r') ? (int)strtol(op2 + 1, NULL, 0) : 0;
+        rt = (op3[0] == 'r') ? (int)strtol(op3 + 1, NULL, 0) : 0;
+    }
+    else if (strcmp(e->format, "rd L") == 0 && num >= 3) {
+        rd = (op1[0] == 'r') ? (int)strtol(op1 + 1, NULL, 0) : 0;
+        imm = (int)strtol(op2, NULL, 0);
+    }
+    else if (strcmp(e->format, "rd rs") == 0 && num >= 3) {
+        rd = (op1[0] == 'r') ? (int)strtol(op1 + 1, NULL, 0) : 0;
+        rs = (op2[0] == 'r') ? (int)strtol(op2 + 1, NULL, 0) : 0;
+    }
+    else if (strcmp(e->format, "rd rs rt L") == 0 && num >= 5) {
+        rd = (op1[0] == 'r') ? (int)strtol(op1 + 1, NULL, 0) : 0;
+        rs = (op2[0] == 'r') ? (int)strtol(op2 + 1, NULL, 0) : 0;
+        rt = (op3[0] == 'r') ? (int)strtol(op3 + 1, NULL, 0) : 0;
+        imm = (int)strtol(op4, NULL, 0);
+    }
+    else if (strcmp(e->format, "rd") == 0 && num >= 2) {
+        rd = (op1[0] == 'r') ? (int)strtol(op1 + 1, NULL, 0) : 0;
+    }
+    else if (strcmp(e->format, "") == 0) {
+        // e.g., "return" (no operands)
+    }
+    else {
+        strcpy(binStr, "ERROR");
+        return;
+    }
+
+    unsigned int inst = (opcode << 27) | (rd << 22) | (rs << 17) | (rt << 12) | (imm & 0xFFF);
     intToBinaryStr(inst, 32, binStr);
 }
 
@@ -401,14 +389,15 @@ void assembleStandard(const char *line, char *binStr) {
 void assembleInstruction(const char *line, char *binStr) {
     char mnemonic[16];
     sscanf(line, "%15s", mnemonic);
+
     if (strcmp(mnemonic, "mov") == 0) {
         assembleMov(line, binStr);
     }
     else if (strcmp(mnemonic, "brr") == 0) {
         char dummy[16], operand[64];
         if (sscanf(line, "%15s %63s", dummy, operand) < 2) {
-            fprintf(stderr, "Error: Invalid arguments for instruction %s\n", mnemonic);
-            exit(1);
+            strcpy(binStr, "ERROR");
+            return;
         }
         assembleBrr(operand, binStr);
     }
@@ -423,10 +412,13 @@ void parseMacro(const char *line, FILE *fout) {
     regex_t regex;
     regmatch_t matches[3];
     char op[16];
+
     if (sscanf(line, "%15s", op) != 1) {
         fprintf(fout, "%s\n", line);
         return;
     }
+
+    // ---- LD macro ----
     if (!strcmp(op, "ld")) {
         const char *pattern = "^[[:space:]]*ld[[:space:]]+r([0-9]+)[[:space:]]*,?[[:space:]]*:?(\\S+)[[:space:]]*$";
         if (regcomp(&regex, pattern, REG_EXTENDED) != 0) {
@@ -441,6 +433,7 @@ void parseMacro(const char *line, FILE *fout) {
             strncpy(regBuf, line + matches[1].rm_so, len);
             regBuf[len] = '\0';
             rD = (int)strtol(regBuf, NULL, 0);
+
             len = matches[2].rm_eo - matches[2].rm_so;
             strncpy(immBuf, line + matches[2].rm_so, len);
             immBuf[len] = '\0';
@@ -474,6 +467,7 @@ void parseMacro(const char *line, FILE *fout) {
             unsigned long long mid12c = (imm >> 16) & 0xFFF;
             unsigned long long mid4   = (imm >> 4)  & 0xFFF;
             unsigned long long last4  = imm & 0xF;
+
             fprintf(fout, "addi r%d %llu\n", rD, top12);
             fprintf(fout, "shftli r%d 12\n", rD);
             fprintf(fout, "addi r%d %llu\n", rD, mid12a);
@@ -490,6 +484,7 @@ void parseMacro(const char *line, FILE *fout) {
         }
         regfree(&regex);
     }
+    // ---- PUSH macro ----
     else if (!strcmp(op, "push")) {
         const char *pattern = "^[[:space:]]*push[[:space:]]+r([0-9]+)[[:space:]]*,?[[:space:]]*$";
         if (regcomp(&regex, pattern, REG_EXTENDED) != 0) {
@@ -502,7 +497,7 @@ void parseMacro(const char *line, FILE *fout) {
             int len = matches[1].rm_eo - matches[1].rm_so;
             strncpy(regBuf, line + matches[1].rm_so, len);
             regBuf[len] = '\0';
-            rD = validateRegister(regBuf);
+            rD = (int)strtol(regBuf, NULL, 0);
             fprintf(fout, "mov (r31)(-8), r%d\n", rD);
             fprintf(fout, "subi r31 8\n");
         } else {
@@ -510,6 +505,7 @@ void parseMacro(const char *line, FILE *fout) {
         }
         regfree(&regex);
     }
+    // ---- POP macro ----
     else if (!strcmp(op, "pop")) {
         const char *pattern = "^[[:space:]]*pop[[:space:]]+r([0-9]+)[[:space:]]*,?[[:space:]]*$";
         if (regcomp(&regex, pattern, REG_EXTENDED) != 0) {
@@ -522,8 +518,8 @@ void parseMacro(const char *line, FILE *fout) {
             int len = matches[1].rm_eo - matches[1].rm_so;
             strncpy(regBuf, line + matches[1].rm_so, len);
             regBuf[len] = '\0';
-            rD = validateRegister(regBuf);
-            // FIX: Insert comma between rD and (r31)(0)
+            rD = (int)strtol(regBuf, NULL, 0);
+            // FIX: add comma between destination register and memory operand.
             fprintf(fout, "mov r%d, (r31)(0)\n", rD);
             fprintf(fout, "addi r31 8\n");
         } else {
@@ -531,6 +527,7 @@ void parseMacro(const char *line, FILE *fout) {
         }
         regfree(&regex);
     }
+    // ---- IN macro ----
     else if (!strcmp(op, "in")) {
         const char *pattern = "^[[:space:]]*in[[:space:]]+r([0-9]+)[[:space:]]*,?[[:space:]]*r([0-9]+)[[:space:]]*$";
         if (regcomp(&regex, pattern, REG_EXTENDED) != 0) {
@@ -546,14 +543,15 @@ void parseMacro(const char *line, FILE *fout) {
             len = matches[2].rm_eo - matches[2].rm_so;
             strncpy(regBuf2, line + matches[2].rm_so, len);
             regBuf2[len] = '\0';
-            rD = validateRegister(regBuf);
-            rS = validateRegister(regBuf2);
+            rD = (int)strtol(regBuf, NULL, 0);
+            rS = (int)strtol(regBuf2, NULL, 0);
             fprintf(fout, "priv r%d r%d r0 3\n", rD, rS);
         } else {
             fprintf(fout, "%s\n", line);
         }
         regfree(&regex);
     }
+    // ---- OUT macro ----
     else if (!strcmp(op, "out")) {
         const char *pattern = "^[[:space:]]*out[[:space:]]+r([0-9]+)[[:space:]]*,?[[:space:]]*r([0-9]+)[[:space:]]*$";
         if (regcomp(&regex, pattern, REG_EXTENDED) != 0) {
@@ -569,14 +567,15 @@ void parseMacro(const char *line, FILE *fout) {
             len = matches[2].rm_eo - matches[2].rm_so;
             strncpy(regBuf2, line + matches[2].rm_so, len);
             regBuf2[len] = '\0';
-            rD = validateRegister(regBuf);
-            rS = validateRegister(regBuf2);
+            rD = (int)strtol(regBuf, NULL, 0);
+            rS = (int)strtol(regBuf2, NULL, 0);
             fprintf(fout, "priv r%d r%d r0 4\n", rD, rS);
         } else {
             fprintf(fout, "%s\n", line);
         }
         regfree(&regex);
     }
+    // ---- CLR macro ----
     else if (!strcmp(op, "clr")) {
         const char *pattern = "^[[:space:]]*clr[[:space:]]+r([0-9]+)[[:space:]]*$";
         if (regcomp(&regex, pattern, REG_EXTENDED) != 0) {
@@ -589,13 +588,14 @@ void parseMacro(const char *line, FILE *fout) {
             int len = matches[1].rm_eo - matches[1].rm_so;
             strncpy(regBuf, line + matches[1].rm_so, len);
             regBuf[len] = '\0';
-            rD = validateRegister(regBuf);
+            rD = (int)strtol(regBuf, NULL, 0);
             fprintf(fout, "xor r%d r%d r%d\n", rD, rD, rD);
         } else {
             fprintf(fout, "%s\n", line);
         }
         regfree(&regex);
     }
+    // ---- HALT macro ----
     else if (!strcmp(op, "halt")) {
         const char *pattern = "^[[:space:]]*halt[[:space:]]*$";
         if (regcomp(&regex, pattern, REG_EXTENDED) != 0) {
@@ -609,6 +609,7 @@ void parseMacro(const char *line, FILE *fout) {
         }
         regfree(&regex);
     }
+    // ---- Otherwise pass through ----
     else {
         fprintf(fout, "%s\n", line);
     }
@@ -616,7 +617,6 @@ void parseMacro(const char *line, FILE *fout) {
 
 // ---------------- Final Assembly Pass ----------------
 // Reads the intermediate assembly file and writes a binary file.
-// In the DATA section, validate that each data line is a valid nonnegative unsigned 64-bit integer.
 void finalAssemble(const char *infile, const char *outfile) {
     FILE *fin = fopen(infile, "r");
     if (!fin) {
@@ -629,9 +629,11 @@ void finalAssemble(const char *infile, const char *outfile) {
         fclose(fin);
         exit(1);
     }
+
     enum { CODE, DATA } currentSection = CODE;
     char line[1024];
     char assembled[128];
+
     while (fgets(line, sizeof(line), fin)) {
         line[strcspn(line, "\n")] = '\0';
         trim(line);
@@ -654,14 +656,12 @@ void finalAssemble(const char *infile, const char *outfile) {
             char lab[50];
             if (sscanf(col + 1, "%49s", lab) == 1) {
                 LabelAddress *entry = findLabel(lab);
-                if (!entry) {
-                    fprintf(stderr, "Error: Label %s not found\n", lab);
-                    exit(1);
+                if (entry) {
+                    *col = '\0';
+                    char temp[128];
+                    sprintf(temp, "%s0x%x", line, entry->address);
+                    strcpy(line, temp);
                 }
-                *col = '\0';
-                char temp[128];
-                sprintf(temp, "%s0x%x", line, entry->address);
-                strcpy(line, temp);
             }
         }
         if (currentSection == CODE) {
@@ -711,21 +711,11 @@ void finalAssemble(const char *infile, const char *outfile) {
                 fwrite(&word, sizeof(word), 1, fout);
             }
         } else { // DATA section
-            // Validate that the data is a nonnegative unsigned number.
-            if (line[0] == '-' || !isdigit((unsigned char)line[0])) {
-                fprintf(stderr, "Error: Invalid data: %s\n", line);
-                exit(1);
-            }
-            char *endptr;
-            errno = 0;
-            uint64_t dVal = strtoull(line, &endptr, 0);
-            if (errno == ERANGE || endptr == line || *endptr != '\0') {
-                fprintf(stderr, "Error: Invalid data: %s\n", line);
-                exit(1);
-            }
+            uint64_t dVal = strtoull(line, NULL, 0);
             fwrite(&dVal, sizeof(dVal), 1, fout);
         }
     }
+
     fclose(fin);
     fclose(fout);
 }
