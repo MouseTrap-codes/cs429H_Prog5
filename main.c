@@ -185,11 +185,11 @@ void assembleBrr(const char *operand, char *binStr) {
 }
 
 // mov: custom routine for MOV instructions.
-// This routine distinguishes between the different forms:
-//   - Form 4 (store to memory): "mov (rD)(L), rS" => opcode 0x13, immediate is signed.
-//   - Form 1 (load from memory): "mov rD, (rS)(L)" => opcode 0x10, immediate is signed.
-//   - Form 2: "mov rD, rS" => opcode 0x11.
-//   - Form 3: "mov rD, L" => opcode 0x12, immediate is unsigned.
+// It distinguishes between:
+//   - Form 4: "mov (rD)(L), rS" => opcode 0x13 (store to memory)
+//   - Form 1: "mov rD, (rS)(L)" => opcode 0x10 (load from memory)
+//   - Form 2: "mov rD, rS" => opcode 0x11
+//   - Form 3: "mov rD, L" => opcode 0x12 (immediate must be unsigned)
 void assembleMov(const char *line, char *binStr) {
     char mnemonic[10], token1[64], token2[64];
     if (sscanf(line, "%s %63[^,], %63s", mnemonic, token1, token2) < 3) {
@@ -201,9 +201,9 @@ void assembleMov(const char *line, char *binStr) {
 
     int opcode = 0, rd = 0, rs = 0, rt = 0, imm = 0;
 
-    // If token1 begins with '(' then assume form 4: "mov (rD)(L), rS"
+    // If token1 begins with '(' then it's Form 4: "mov (rD)(L), rS"
     if (token1[0] == '(') {
-        opcode = 0x13;  // Format: mov (rd)(L), rs
+        opcode = 0x13;
         char regBuf[16], offBuf[16];
         char *p1 = strchr(token1, 'r');
         if (!p1) {
@@ -218,8 +218,7 @@ void assembleMov(const char *line, char *binStr) {
             return;
         }
         sscanf(p2, "(%[^)])", offBuf);
-        // For this form, the immediate is signed (negative allowed)
-        imm = (int)strtol(offBuf, NULL, 0);
+        imm = (int)strtol(offBuf, NULL, 0);  // immediate is signed in this form.
         if (token2[0] == 'r') {
             rs = (int)strtol(token2 + 1, NULL, 0);
         } else {
@@ -227,7 +226,7 @@ void assembleMov(const char *line, char *binStr) {
             return;
         }
     } else {
-        // Otherwise, token1 should be "rD"
+        // Otherwise token1 should be "rD"
         if (token1[0] != 'r') {
             strcpy(binStr, "ERROR");
             return;
@@ -250,7 +249,6 @@ void assembleMov(const char *line, char *binStr) {
                 return;
             }
             sscanf(p2, "(%[^)])", offBuf);
-            // For this form, immediate is signed.
             imm = (int)strtol(offBuf, NULL, 0);
         } else if (token2[0] == 'r') {
             // Form 2: "mov rD, rS" => opcode 0x11
@@ -409,8 +407,7 @@ void assembleInstruction(const char *line, char *binStr) {
 }
 
 // ---------------- Macro Expansion ----------------
-// This function uses POSIX regex functions to expand macros:
-// (ld, push, pop, in, out, clr, halt)
+// Uses POSIX regex functions to expand macros: ld, push, pop, in, out, clr, halt.
 void parseMacro(const char *line, FILE *fout) {
     regex_t regex;
     regmatch_t matches[3];
@@ -501,7 +498,7 @@ void parseMacro(const char *line, FILE *fout) {
             strncpy(regBuf, line + matches[1].rm_so, len);
             regBuf[len] = '\0';
             rD = (int)strtol(regBuf, NULL, 0);
-            fprintf(fout, "mov (r31)(-8) r%d\n", rD);
+            fprintf(fout, "mov (r31)(-8), r%d\n", rD);
             fprintf(fout, "subi r31 8\n");
         } else {
             fprintf(fout, "%s\n", line);
@@ -522,7 +519,8 @@ void parseMacro(const char *line, FILE *fout) {
             strncpy(regBuf, line + matches[1].rm_so, len);
             regBuf[len] = '\0';
             rD = (int)strtol(regBuf, NULL, 0);
-            fprintf(fout, "mov r%d (r31)(0)\n", rD);
+            // FIX: add comma between destination register and memory operand.
+            fprintf(fout, "mov r%d, (r31)(0)\n", rD);
             fprintf(fout, "addi r31 8\n");
         } else {
             fprintf(fout, "%s\n", line);
@@ -618,14 +616,13 @@ void parseMacro(const char *line, FILE *fout) {
 }
 
 // ---------------- Final Assembly Pass ----------------
-// This pass reads the intermediate assembly file and writes a binary file.
+// Reads the intermediate assembly file and writes a binary file.
 void finalAssemble(const char *infile, const char *outfile) {
     FILE *fin = fopen(infile, "r");
     if (!fin) {
         perror("finalAssemble fopen");
         exit(1);
     }
-    // Open output file in binary mode.
     FILE *fout = fopen(outfile, "wb");
     if (!fout) {
         perror("finalAssemble output fopen");
@@ -642,7 +639,6 @@ void finalAssemble(const char *infile, const char *outfile) {
         trim(line);
         if (line[0] == '\0' || line[0] == ';')
             continue;
-
         if (line[0] == '.') {
             if (strcmp(line, ".code") == 0) {
                 currentSection = CODE;
@@ -651,11 +647,9 @@ void finalAssemble(const char *infile, const char *outfile) {
             }
             continue;
         }
-
         if (line[0] == ':') {
-            continue; // labels already handled
+            continue;
         }
-
         // Label substitution: replace ":<label>" with its address in hex.
         char *col = strchr(line, ':');
         if (col) {
@@ -670,11 +664,9 @@ void finalAssemble(const char *infile, const char *outfile) {
                 }
             }
         }
-
         if (currentSection == CODE) {
             char token[16];
             sscanf(line, "%15s", token);
-
             if ((strcmp(token, "ld") == 0)   ||
                 (strcmp(token, "push") == 0) ||
                 (strcmp(token, "pop") == 0)  ||
@@ -692,7 +684,6 @@ void finalAssemble(const char *infile, const char *outfile) {
                 parseMacro(line, tempStream);
                 fflush(tempStream);
                 fclose(tempStream);
-
                 char *expLine = strtok(macroExp, "\n");
                 while (expLine) {
                     trim(expLine);
@@ -719,8 +710,7 @@ void finalAssemble(const char *infile, const char *outfile) {
                 uint32_t word = binStrToUint32(assembled);
                 fwrite(&word, sizeof(word), 1, fout);
             }
-        }
-        else { // DATA section
+        } else { // DATA section
             uint64_t dVal = strtoull(line, NULL, 0);
             fwrite(&dVal, sizeof(dVal), 1, fout);
         }
@@ -736,16 +726,9 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Usage: %s <assembly_file> <output_file>\n", argv[0]);
         return 1;
     }
-    // Pass 1: Build label mapping
     pass1(argv[1]);
-
-    // Populate the instruction table.
     populateInstMap();
-
-    // Final assembly: write final binary output.
     finalAssemble(argv[1], argv[2]);
-
-    // Clean up.
     freeInstMap();
     freeLabelMap();
     return 0;
