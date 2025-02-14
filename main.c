@@ -315,8 +315,8 @@ void freeInstMap() {
 
 // Assemble standard instructions using the instMap
 void assembleStandard(const char *line, char *binStr) {
-    char mnemonic[16], op1[16], op2[16], op3[16];
-    int num = sscanf(line, "%15s %15s %15s %15s", mnemonic, op1, op2, op3);
+    char mnemonic[16], op1[16], op2[16], op3[16], op4[16];
+    int num = sscanf(line, "%15s %15s %15s %15s %15s", mnemonic, op1, op2, op3, op4);
 
     InstructionEntry *e = NULL;
     HASH_FIND_STR(instMap, mnemonic, e);
@@ -338,6 +338,15 @@ void assembleStandard(const char *line, char *binStr) {
     else if (strcmp(e->format, "rd rs") == 0 && num >= 3) {
         rd = (op1[0] == 'r') ? (int)strtol(op1 + 1, NULL, 0) : 0;
         rs = (op2[0] == 'r') ? (int)strtol(op2 + 1, NULL, 0) : 0;
+    }
+    else if (strcmp(e->format, "rd rs rt L") == 0 && num >= 5) {
+        rd = (op1[0] == 'r') ? (int)strtol(op1 + 1, NULL, 0) : 0;
+        rs = (op2[0] == 'r') ? (int)strtol(op2 + 1, NULL, 0) : 0;
+        rt = (op3[0] == 'r') ? (int)strtol(op3 + 1, NULL, 0) : 0;
+        imm = (int)strtol(op4, NULL, 0);
+    }
+    else if (strcmp(e->format, "rd") == 0 && num >= 2) {
+        rd = (op1[0] == 'r') ? (int)strtol(op1 + 1, NULL, 0) : 0;
     }
     else if (strcmp(e->format, "") == 0) {
         // e.g., "return" (no operands)
@@ -575,7 +584,7 @@ void parseMacro(const char *line, FILE *fout) {
             regBuf[len] = '\0';
             rD = (int)strtol(regBuf, NULL, 0);
 
-            // Macro expansion => xor rD,rD,rD
+            // Macro expansion => xor rD, rD, rD
             fprintf(fout, "xor r%d r%d r%d\n", rD, rD, rD);
         } else {
             fprintf(fout, "%s\n", line);
