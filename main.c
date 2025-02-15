@@ -22,51 +22,11 @@ typedef struct {
 
 static LabelAddress *labelMap = NULL;
 
-/*
- * Checks if a label name is valid: no spaces, must only contain [A-Za-z0-9_],
- * and must not start with a digit.
- */
-static int isValidLabelName(const char *label) {
-    // Must start with letter or underscore
-    if (!isalpha((unsigned char)label[0]) && label[0] != '_') {
-        return 0;
-    }
-    // Check remaining chars
-    for (int i = 1; label[i] != '\0'; i++) {
-        if (!isalnum((unsigned char)label[i]) && label[i] != '_') {
-            return 0;
-        }
-    }
-    return 1;
-}
-
-// Forward declaration of our "abortAssembly()" so we can call it in addLabel()
-static void abortAssembly(void);
-
 void addLabel(const char *label, int address) {
-    // Check if it's a duplicate
-    LabelAddress *found = NULL;
-    found = (LabelAddress *)malloc(sizeof(LabelAddress)); // dummy alloc to avoid compiler warnings
-    free(found); // just to quiet any -Wunused-... warnings in some compilers
-    found = NULL;
-
-    found = (LabelAddress *) findLabel(label);
-    if (found) {
-        fprintf(stderr, "Error: Duplicate label \"%s\"\n", label);
-        abortAssembly();
-    }
-
-    // Check if label is valid
-    if (!isValidLabelName(label)) {
-        fprintf(stderr, "Error: Invalid label name \"%s\"\n", label);
-        abortAssembly();
-    }
-
-    // If everything is good, add it
     LabelAddress *entry = (LabelAddress *)malloc(sizeof(LabelAddress));
     if (!entry) {
         fprintf(stderr, "Error: malloc failed in addLabel.\n");
-        abortAssembly();
+        exit(1);
     }
     strncpy(entry->label, label, sizeof(entry->label) - 1);
     entry->label[sizeof(entry->label) - 1] = '\0';
@@ -457,6 +417,8 @@ void assembleInstruction(const char *line, char *binStr) {
 // ===================================================================
 //                      Macro Expansion
 // ===================================================================
+// The crucial change here is: if the regex fails, we produce an error
+// -> abortAssembly(), to ensure "invalid macro usage => non-zero return code."
 void parseMacro(const char *line, FILE *outStream) {
     regex_t regex;
     regmatch_t matches[3];
@@ -699,7 +661,8 @@ void parseMacro(const char *line, FILE *outStream) {
         regfree(&regex);
     }
     // --------------------------------------------------
-    // if we get here, user typed something else, fallback
+    // if we get here, user typed something else, we pass it as an error?
+    // Actually if we get here, we do fallback
     else {
         // We only forcibly error if the line *starts with* one of our macros.
         // So if 'op' is none of these, we do fallback printing
