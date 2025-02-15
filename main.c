@@ -22,7 +22,73 @@ typedef struct {
 
 static LabelAddress *labelMap = NULL;
 
+// ===================================================================
+//                     Global Error-Handling
+// ===================================================================
+static FILE *g_fout = NULL;
+static char g_outFilename[1024];
+
+// If we detect an error mid-assembly in Pass 2, remove partial .tko file and exit
+static void abortAssembly(void) {
+    if (g_fout) {
+        fclose(g_fout);
+        g_fout = NULL;
+    }
+    // If g_outFilename is non-empty, remove it
+    if (g_outFilename[0] != '\0') {
+        unlink(g_outFilename);
+    }
+    exit(1);
+}
+
+// ===================================================================
+//                     Label Validation
+// ===================================================================
+/*
+ * Checks if a label name is valid: no spaces, must only contain [A-Za-z0-9_],
+ * and must not start with a digit.
+ */
+static int isValidLabelName(const char *label) {
+    // Must start with letter or underscore
+    if (!isalpha((unsigned char)label[0]) && label[0] != '_') {
+        return 0;
+    }
+    // Check remaining chars
+    for (int i = 1; label[i] != '\0'; i++) {
+        if (!isalnum((unsigned char)label[i]) && label[i] != '_') {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+// ===================================================================
+//                Add / Find / Free Label
+// ===================================================================
+LabelAddress *findLabel(const char *label) {
+    LabelAddress *entry = NULL;
+    HASH_FIND_STR(labelMap, label, entry);
+    return entry;
+}
+
+/*
+ * Add a label to the labelMap during Pass 1.
+ * If the label is invalid or duplicate, print error & exit(1).
+ */
 void addLabel(const char *label, int address) {
+    // Duplicate check
+    if (findLabel(label)) {
+        fprintf(stderr, "Error: Duplicate label \"%s\"\n", label);
+        // For Pass 1, we do NOT call abortAssembly() because
+        // there's no output file open yet. Just exit(1).
+        exit(1);
+    }
+    // Validate
+    if (!isValidLabelName(label)) {
+        fprintf(stderr, "Error: Invalid label name \"%s\"\n", label);
+        exit(1);
+    }
+    // Insert
     LabelAddress *entry = (LabelAddress *)malloc(sizeof(LabelAddress));
     if (!entry) {
         fprintf(stderr, "Error: malloc failed in addLabel.\n");
@@ -34,34 +100,12 @@ void addLabel(const char *label, int address) {
     HASH_ADD_STR(labelMap, label, entry);
 }
 
-LabelAddress *findLabel(const char *label) {
-    LabelAddress *entry;
-    HASH_FIND_STR(labelMap, label, entry);
-    return entry;
-}
-
 void freeLabelMap() {
     LabelAddress *cur, *tmp;
     HASH_ITER(hh, labelMap, cur, tmp) {
         HASH_DEL(labelMap, cur);
         free(cur);
     }
-}
-
-// ===================================================================
-//                     Global Error-Handling
-// ===================================================================
-static FILE *g_fout = NULL;
-static char g_outFilename[1024];
-
-// If we detect an error mid-assembly, remove partial .tko file and exit
-static void abortAssembly(void) {
-    if (g_fout) {
-        fclose(g_fout);
-        g_fout = NULL;
-    }
-    unlink(g_outFilename);
-    exit(1);
 }
 
 // ===================================================================
@@ -417,8 +461,6 @@ void assembleInstruction(const char *line, char *binStr) {
 // ===================================================================
 //                      Macro Expansion
 // ===================================================================
-// The crucial change here is: if the regex fails, we produce an error
-// -> abortAssembly(), to ensure "invalid macro usage => non-zero return code."
 void parseMacro(const char *line, FILE *outStream) {
     regex_t regex;
     regmatch_t matches[3];
@@ -486,7 +528,7 @@ void parseMacro(const char *line, FILE *outStream) {
             unsigned long long mid12b=(imm>>28)&0xFFF;
             unsigned long long mid12c=(imm>>16)&0xFFF;
             unsigned long long mid4  =(imm>>4)&0xFFF;
-            unsigned long long last4 =imm & 0xF;
+            unsigned long long last4 = imm & 0xF;
 
             fprintf(outStream,"addi r%d %llu\n",rD,top12);
             fprintf(outStream,"shftli r%d 12\n",rD);
@@ -661,8 +703,7 @@ void parseMacro(const char *line, FILE *outStream) {
         regfree(&regex);
     }
     // --------------------------------------------------
-    // if we get here, user typed something else, we pass it as an error?
-    // Actually if we get here, we do fallback
+    // if we get here, user typed something else, fallback
     else {
         // We only forcibly error if the line *starts with* one of our macros.
         // So if 'op' is none of these, we do fallback printing
@@ -679,10 +720,11 @@ void finalAssemble(const char *infile, const char *outfile) {
         perror("finalAssemble fopen");
         exit(1);
     }
+    // We set up g_outFilename so abortAssembly can remove partial .tko
     strncpy(g_outFilename, outfile, sizeof(g_outFilename)-1);
     g_outFilename[sizeof(g_outFilename)-1] = '\0';
 
-    g_fout=fopen(outfile,"wb");
+    g_fout = fopen(outfile,"wb");
     if(!g_fout){
         perror("finalAssemble output fopen");
         fclose(fin);
@@ -718,13 +760,14 @@ void finalAssemble(const char *infile, const char *outfile) {
             if(sscanf(col+1,"%49s",lab)==1){
                 LabelAddress *entry=findLabel(lab);
                 if(!entry){
+                    // Here in Pass 2, label not found => abort
                     fprintf(stderr,"Error: label '%s' not found\n",lab);
                     fclose(fin);
                     abortAssembly();
                 }
                 *col='\0';
                 char temp[256];
-                sprintf(temp,"%s0x%x",line, entry->address);
+                sprintf(temp,"%s0x%x", line, entry->address);
                 strcpy(line,temp);
             }
         }
@@ -844,9 +887,17 @@ int main(int argc, char *argv[]){
         fprintf(stderr,"Usage: %s <assembly_file> <output_file>\n",argv[0]);
         return 1;
     }
+
+    // Pass 1: any label error => exit(1)
     pass1(argv[1]);
+
+    // Build instruction map
     populateInstMap();
+
+    // Pass 2: final assembly; any error => abortAssembly (removes .tko)
     finalAssemble(argv[1], argv[2]);
+
+    // Cleanup
     freeInstMap();
     freeLabelMap();
     return 0;
