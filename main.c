@@ -51,19 +51,16 @@ void freeLabelMap() {
 // ===================================================================
 //                     Global Error-Handling
 // ===================================================================
-// We intercept error conditions so that if we detect an error
-// mid-assembly, we remove the partially written .tko file and exit.
 static FILE *g_fout = NULL;
 static char g_outFilename[1024];
 
+// If we detect an error mid-assembly, remove partial .tko and exit.
 static void abortAssembly(void) {
-    // Close if open
     if (g_fout) {
         fclose(g_fout);
         g_fout = NULL;
     }
-    // Remove partial file
-    unlink(g_outFilename);
+    unlink(g_outFilename); 
     exit(1);
 }
 
@@ -87,7 +84,6 @@ void trim(char *s) {
     }
 }
 
-// Convert 32-bit integer -> 32-char binary string
 void intToBinaryStr(unsigned int value, int width, char *outStr) {
     for (int i = width - 1; i >= 0; i--) {
         outStr[width - 1 - i] = ((value >> i) & 1) ? '1' : '0';
@@ -95,7 +91,6 @@ void intToBinaryStr(unsigned int value, int width, char *outStr) {
     outStr[width] = '\0';
 }
 
-// Convert 32-char '0'/'1' string -> uint32_t
 uint32_t binStrToUint32(const char *binStr) {
     uint32_t value = 0;
     for (int i = 0; i < 32; i++) {
@@ -117,7 +112,7 @@ void pass1(const char *filename) {
         exit(1);
     }
     enum { NONE, CODE, DATA } section = NONE;
-    int pc = 0x1000; // starting address
+    int pc = 0x1000; 
     char line[1024];
 
     while (fgets(line, sizeof(line), fin)) {
@@ -146,7 +141,7 @@ void pass1(const char *filename) {
         if (section == CODE) {
             char temp[16];
             sscanf(line, "%15s", temp);
-            if (strcmp(temp, "ld") == 0) {
+            if (!strcmp(temp, "ld")) {
                 // ld => 12 instructions => 48 bytes
                 pc += 48;
             } else if (!strcmp(temp, "push") || !strcmp(temp, "pop")) {
@@ -157,7 +152,7 @@ void pass1(const char *filename) {
                 pc += 4;
             }
         } else if (section == DATA) {
-            // each data item is 64 bits => 8 bytes
+            // each data item => 8 bytes
             pc += 8;
         }
     }
@@ -165,12 +160,12 @@ void pass1(const char *filename) {
 }
 
 // ===================================================================
-//         Instruction Table for Standard Instructions
+//       Instruction Table for Standard Instructions
 // ===================================================================
 typedef struct {
     char name[16];
     int  opcode;
-    const char *format; // e.g. "rd rs rt", "rd L", etc.
+    const char *format; 
     UT_hash_handle hh;
 } InstructionEntry;
 
@@ -201,9 +196,9 @@ void populateInstMap() {
     instMap = NULL;
     // Integer arithmetic
     addInst("add",   0x18, "rd rs rt");
-    addInst("addi",  0x19, "rd L");  // unsigned immediate
+    addInst("addi",  0x19, "rd L");  
     addInst("sub",   0x1a, "rd rs rt");
-    addInst("subi",  0x1b, "rd L");  // unsigned immediate
+    addInst("subi",  0x1b, "rd L");  
     addInst("mul",   0x1c, "rd rs rt");
     addInst("div",   0x1d, "rd rs rt");
     // Logic
@@ -212,13 +207,12 @@ void populateInstMap() {
     addInst("xor",   0x2,  "rd rs rt");
     addInst("not",   0x3,  "rd rs");
     addInst("shftr", 0x4,  "rd rs rt");
-    addInst("shftri",0x5,  "rd L");  // unsigned immediate
+    addInst("shftri",0x5,  "rd L");  
     addInst("shftl", 0x6,  "rd rs rt");
-    addInst("shftli",0x7,  "rd L");  // unsigned immediate
+    addInst("shftli",0x7,  "rd L");  
     // Control
     addInst("br",    0x8,  "rd");
     addInst("brnz",  0xb,  "rd rs");
-    // "call rd" only => opcode 0xc
     addInst("call",  0xc,  "rd");
     addInst("return",0xd,  "");
     addInst("brgt",  0xe,  "rd rs rt");
@@ -232,24 +226,22 @@ void populateInstMap() {
 }
 
 // ===================================================================
-//               Assembling Standard & Special Instructions
+// Assembling "brr", "mov", or standard instructions
 // ===================================================================
 void assembleBrrOperand(const char *operand, char *binStr) {
-    // Decide opcode 0x9 (brr rd => pc = pc+rd) vs 0xa (brr imm => pc=pc+imm)
-    while (isspace((unsigned char)*operand)) {
-        operand++;
-    }
-    int opcode, reg = 0, imm = 0;
-    if (operand[0] == 'r') {
-        opcode = 0x9;
-        reg = (int)strtol(operand + 1, NULL, 0);
+    while (isspace((unsigned char)*operand)) operand++;
+    int opcode, reg=0, imm=0;
+    if (operand[0]=='r'){
+        opcode=0x9;
+        reg=strtol(operand+1,NULL,0);
     } else {
-        opcode = 0xa; // brr <signed literal>
-        imm = (int)strtol(operand, NULL, 0);
+        opcode=0xa;
+        imm=strtol(operand,NULL,0);
     }
-    // Format: [opcode(5 bits) << 27 | reg(5 bits)<<22 | imm(12 bits)]
-    unsigned int inst = (opcode << 27) | (reg << 22) | ((imm & 0xFFF));
-    intToBinaryStr(inst, 32, binStr);
+    unsigned int inst=(opcode<<27)|(reg<<22)|((imm&0xFFF));
+    char tmp[33];
+    intToBinaryStr(inst,32,tmp);
+    strcpy(binStr,tmp);
 }
 
 // Handle "mov" in all 4 forms
