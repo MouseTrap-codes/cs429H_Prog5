@@ -1,0 +1,8 @@
+.code
+    ld r1, 8742
+    ld r2, 243
+    mov (r1)(-5), r2
+    mov r3, (r1)(-6)
+    ld r4, 1
+    out r4, r3
+    halt
