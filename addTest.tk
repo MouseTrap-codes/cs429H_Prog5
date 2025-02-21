@@ -1,0 +1,5 @@
+.code
+    ld r2 0
+    ld r3 2
+    ld r4 3
+    add r2 r3 r4
