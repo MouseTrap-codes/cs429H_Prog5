@@ -1,5 +1,6 @@
 .code
-    ld r2 0
-    ld r3 2
-    ld r4 3
+    ld r2, 0
+    ld r3, 2
+    ld r4, 3
     add r2 r3 r4
+    priv r0, r0, r0, 0
